@@ -1,0 +1,509 @@
+name: CGI AI Retail & Consumer Services Weekstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 7 * * 5"
+      timezone: Europe/Amsterdam
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Generate CGI AI weekstream site
+        run: |
+          mkdir -p site latest-check
+          python3 <<'PY'
+          import datetime as dt
+          import email.utils
+          import html
+          import json
+          import os
+          import re
+          import textwrap
+          import urllib.request
+          import xml.etree.ElementTree as ET
+          from string import Template
+          from zoneinfo import ZoneInfo
+          from urllib.parse import urlparse
+
+          VERSION = "v5.0-clean-repo-login-filters-visuals"
+          ACCESS_HASH = "7f9aa7542a6e2d53ce2eb1cf957faedbecc10c6f9a071dfdeb290d8a4d122359"  # NT2026!
+          LOOKBACK_HOURS = 168
+          MAX_ITEMS = 90
+
+          now = dt.datetime.now(dt.timezone.utc)
+          cutoff = now - dt.timedelta(hours=LOOKBACK_HOURS)
+          AMSTERDAM = ZoneInfo("Europe/Amsterdam")
+          generated_at = now.astimezone(AMSTERDAM).strftime("%d-%m-%Y %H:%M")
+
+          SOURCES = [
+              {"name": "TechCrunch AI", "url": "https://techcrunch.com/category/artificial-intelligence/feed/", "group": "AI news"},
+              {"name": "The Verge AI", "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", "group": "AI news"},
+              {"name": "WIRED AI", "url": "https://www.wired.com/feed/tag/ai/latest/rss", "group": "AI news"},
+              {"name": "MIT News AI", "url": "https://news.mit.edu/topic/artificial-intelligence2-rss.xml", "group": "AI research"},
+              {"name": "OpenAI News", "url": "https://openai.com/news/rss.xml", "group": "AI lab"},
+              {"name": "Google DeepMind Blog", "url": "https://deepmind.google/blog/rss.xml", "group": "AI lab"},
+              {"name": "Anthropic News", "url": "https://www.anthropic.com/news/rss.xml", "group": "AI lab"},
+              {"name": "VentureBeat AI", "url": "https://venturebeat.com/category/ai/feed/", "group": "Enterprise AI"},
+              {"name": "The Decoder", "url": "https://the-decoder.com/feed/", "group": "AI news"},
+              {"name": "NVIDIA Blog", "url": "https://blogs.nvidia.com/blog/category/deep-learning/feed/", "group": "AI infrastructure"},
+              {"name": "Microsoft AI Blog", "url": "https://blogs.microsoft.com/ai/feed/", "group": "Enterprise AI"},
+              {"name": "Hugging Face Papers", "url": "https://huggingface.co/papers/rss", "group": "AI research"},
+              {"name": "Retail Dive", "url": "https://www.retaildive.com/feeds/news/", "group": "Retail"},
+              {"name": "Modern Retail", "url": "https://www.modernretail.co/feed/", "group": "Retail"},
+              {"name": "RetailWire", "url": "https://retailwire.com/feed/", "group": "Retail"},
+              {"name": "Grocery Dive", "url": "https://www.grocerydive.com/feeds/news/", "group": "Retail"},
+              {"name": "Retail TouchPoints", "url": "https://www.retailtouchpoints.com/feed", "group": "Retail"},
+              {"name": "Digital Commerce 360", "url": "https://www.digitalcommerce360.com/feed/", "group": "Retail"},
+          ]
+
+          AI_TERMS = [
+              " ai ", "artificial intelligence", "generative ai", "genai", "machine learning", "deep learning",
+              "llm", "foundation model", "large language", "chatgpt", "openai", "anthropic", "claude", "gemini",
+              "deepmind", "copilot", "agent", "agents", "automation", "reasoning", "inference", "multimodal",
+              "computer vision", "robotics", "nvidia", "gpu", "model", "chatbot", "synthetic data"
+          ]
+          RETAIL_TERMS = [
+              "retail", "retailer", "consumer", "commerce", "ecommerce", "e-commerce", "grocery", "store", "stores",
+              "shopper", "customer", "loyalty", "personalization", "personalisation", "checkout", "merchandising",
+              "pricing", "promotion", "inventory", "supply chain", "forecast", "fulfillment", "fulfilment", "warehouse",
+              "marketplace", "omnichannel", "retail media", "consumer services", "brand", "fashion", "foodservice"
+          ]
+
+          TOPICS = [
+              "Retail & Consumer Services",
+              "AI Agents & Automation",
+              "GenAI & Foundation Models",
+              "Customer & Loyalty",
+              "Store Operations",
+              "Supply Chain & Forecasting",
+              "Pricing & Merchandising",
+              "Data, Platforms & Cloud",
+              "Governance, Risk & Responsible AI",
+              "Research & Market Signals",
+          ]
+
+          def strip_tags(value):
+              value = re.sub(r"<script.*?</script>", " ", value or "", flags=re.I|re.S)
+              value = re.sub(r"<style.*?</style>", " ", value, flags=re.I|re.S)
+              value = re.sub(r"<[^>]+>", " ", value)
+              value = html.unescape(value)
+              value = re.sub(r"\s+", " ", value).strip()
+              return value
+
+          def truncate(value, length=230):
+              value = value.strip()
+              if len(value) <= length:
+                  return value
+              return value[:length].rsplit(" ", 1)[0] + "…"
+
+          def parse_date(value):
+              if not value:
+                  return now
+              value = value.strip()
+              try:
+                  parsed = email.utils.parsedate_to_datetime(value)
+                  if parsed.tzinfo is None:
+                      parsed = parsed.replace(tzinfo=dt.timezone.utc)
+                  return parsed.astimezone(dt.timezone.utc)
+              except Exception:
+                  pass
+              try:
+                  cleaned = value.replace("Z", "+00:00")
+                  parsed = dt.datetime.fromisoformat(cleaned)
+                  if parsed.tzinfo is None:
+                      parsed = parsed.replace(tzinfo=dt.timezone.utc)
+                  return parsed.astimezone(dt.timezone.utc)
+              except Exception:
+                  return now
+
+          def text_of(node, names):
+              for name in names:
+                  found = node.find(name)
+                  if found is not None and found.text:
+                      return found.text.strip()
+              # namespace-insensitive fallback
+              for child in list(node):
+                  tag = child.tag.split("}")[-1].lower()
+                  if tag in [n.lower() for n in names] and child.text:
+                      return child.text.strip()
+              return ""
+
+          def link_of(node):
+              # RSS
+              value = text_of(node, ["link"])
+              if value:
+                  return value.strip()
+              # Atom
+              for child in list(node):
+                  tag = child.tag.split("}")[-1].lower()
+                  if tag == "link":
+                      href = child.attrib.get("href")
+                      if href:
+                          return href.strip()
+              return ""
+
+          def categories_of(node):
+              cats = []
+              for child in list(node):
+                  tag = child.tag.split("}")[-1].lower()
+                  if tag == "category":
+                      if child.text:
+                          cats.append(child.text.strip())
+                      if child.attrib.get("term"):
+                          cats.append(child.attrib["term"].strip())
+              return cats
+
+          def fetch_source(source):
+              req = urllib.request.Request(source["url"], headers={"User-Agent": "CGI-AI-Weekstream/5.0"})
+              with urllib.request.urlopen(req, timeout=25) as response:
+                  data = response.read()
+              root = ET.fromstring(data)
+              root_tag = root.tag.split("}")[-1].lower()
+              nodes = []
+              if root_tag == "rss" or root.find("channel") is not None:
+                  channel = root.find("channel") or root
+                  nodes = channel.findall("item")
+              else:
+                  nodes = [n for n in root.iter() if n.tag.split("}")[-1].lower() == "entry"]
+              items = []
+              for node in nodes[:40]:
+                  title = strip_tags(text_of(node, ["title"]))
+                  link = link_of(node)
+                  raw_date = text_of(node, ["pubDate", "published", "updated", "dc:date"])
+                  date = parse_date(raw_date)
+                  summary = strip_tags(text_of(node, ["description", "summary", "content", "encoded"]))
+                  cats = categories_of(node)
+                  if not title or not link:
+                      continue
+                  items.append({
+                      "title": title,
+                      "link": link,
+                      "date": date,
+                      "summary": truncate(summary or title, 260),
+                      "source": source["name"],
+                      "source_group": source["group"],
+                      "source_url": source["url"],
+                      "categories": cats,
+                  })
+              return items
+
+          def count_terms(text, terms):
+              text = " " + text.lower() + " "
+              score = 0
+              for term in terms:
+                  if term.strip() in text:
+                      score += 1
+              return score
+
+          def classify(item):
+              combined = " ".join([item["title"], item["summary"], item["source"], item["source_group"], " ".join(item.get("categories", []))]).lower()
+              ai_score = count_terms(combined, AI_TERMS)
+              retail_score = count_terms(combined, RETAIL_TERMS)
+              if item["source_group"] in ["AI news", "AI research", "AI lab", "Enterprise AI", "AI infrastructure"]:
+                  ai_score += 3
+              if item["source_group"] == "Retail":
+                  retail_score += 3
+
+              topics = []
+              def has(*terms):
+                  return any(t in combined for t in terms)
+
+              if retail_score >= 2:
+                  topics.append("Retail & Consumer Services")
+              if has("agent", "agents", "automation", "workflow", "robot", "assistant", "copilot"):
+                  topics.append("AI Agents & Automation")
+              if has("generative ai", "genai", "llm", "foundation model", "large language", "openai", "anthropic", "claude", "gemini", "model"):
+                  topics.append("GenAI & Foundation Models")
+              if has("customer", "shopper", "loyalty", "personalization", "personalisation", "marketing", "experience", "cx"):
+                  topics.append("Customer & Loyalty")
+              if has("store", "checkout", "workforce", "employee", "associate", "labor", "queue", "shelf"):
+                  topics.append("Store Operations")
+              if has("supply chain", "forecast", "inventory", "warehouse", "logistics", "fulfillment", "fulfilment", "demand"):
+                  topics.append("Supply Chain & Forecasting")
+              if has("pricing", "price", "merchandising", "assortment", "promotion", "markdown", "category management"):
+                  topics.append("Pricing & Merchandising")
+              if has("data", "platform", "cloud", "infrastructure", "gpu", "nvidia", "api", "database", "compute", "chip", "architecture"):
+                  topics.append("Data, Platforms & Cloud")
+              if has("governance", "risk", "responsible", "regulation", "policy", "safety", "security", "privacy", "copyright", "compliance", "trust"):
+                  topics.append("Governance, Risk & Responsible AI")
+              if has("research", "paper", "benchmark", "study", "report", "index", "survey", "market", "funding", "investment"):
+                  topics.append("Research & Market Signals")
+              if not topics:
+                  topics.append("Research & Market Signals")
+
+              primary = topics[0]
+              if "Retail & Consumer Services" in topics and retail_score >= ai_score:
+                  primary = "Retail & Consumer Services"
+              elif "AI Agents & Automation" in topics:
+                  primary = "AI Agents & Automation"
+              elif "GenAI & Foundation Models" in topics:
+                  primary = "GenAI & Foundation Models"
+
+              item["ai_score"] = ai_score
+              item["retail_score"] = retail_score
+              item["topics"] = topics
+              item["primary_topic"] = primary
+              item["relevance"] = ai_score + retail_score
+              return item
+
+          def cgi_angle(item):
+              topic = item["primary_topic"]
+              if topic == "Retail & Consumer Services":
+                  return "Relevant voor CGI Retail & Consumer Services omdat dit signaal raakt aan klantbeleving, commerciële operatie of platformkeuzes bij retail- en consumer-services-klanten. Bruikbaar als input voor klantgesprekken over AI-adoptie, data readiness en schaalbare implementatie."
+              if topic == "AI Agents & Automation":
+                  return "Relevant voor CGI omdat AI-agents steeds vaker processen, tooling en medewerkersworkflows gaan raken. Voor klanten is dit vooral interessant rond orchestration, integratie met bestaande systemen, governance en gecontroleerde opschaling van pilots naar productie."
+              if topic == "GenAI & Foundation Models":
+                  return "Goed om te volgen voor CGI omdat modelontwikkelingen invloed hebben op platformkeuzes, kosten/performance, vendor-roadmaps en de haalbaarheid van GenAI-oplossingen voor klantprocessen."
+              if topic == "Customer & Loyalty":
+                  return "Interessant voor Retail & Consumer Services omdat personalisatie, loyalty en klantinteractie vaak de eerste zichtbare AI-use-cases zijn. Dit kan helpen in gesprekken over omnichannel CX, consent, klantdata en meetbare waardecreatie."
+              if topic == "Store Operations":
+                  return "Relevant voor klanten met fysieke operatie omdat AI impact kan hebben op winkelprocessen, service, workforce ondersteuning en operationele efficiency. CGI kan hier helpen met procesontwerp, integratie en adoptie op de werkvloer."
+              if topic == "Supply Chain & Forecasting":
+                  return "Relevant voor retailklanten omdat betere forecasting, voorraadbeschikbaarheid en supply-chain-besluitvorming direct kunnen bijdragen aan marge, servicelevels en operationele robuustheid."
+              if topic == "Pricing & Merchandising":
+                  return "Interessant voor commerciële retailteams omdat AI kan bijdragen aan pricing, promoties, assortiment en merchandising. Voor CGI is dit bruikbaar in proposities rond datagedreven category management en besluitvorming."
+              if topic == "Data, Platforms & Cloud":
+                  return "Relevant voor CGI omdat succesvolle AI sterk afhankelijk is van datafundament, cloudarchitectuur, integratie en beheer. Dit artikel kan richting geven aan gesprekken over enterprise-ready AI-platformen."
+              if topic == "Governance, Risk & Responsible AI":
+                  return "Belangrijk voor CGI en klanten omdat AI-opschaling alleen verantwoord kan met heldere governance, security, compliance en risicobeheersing. Dit is vaak randvoorwaardelijk voor productiegebruik bij grotere organisaties."
+              return "Goed om te weten voor CGI Retail & Consumer Services: dit is een marktsignaal dat kan helpen om klantvragen, vendor-roadmaps en toekomstige AI-proposities beter te duiden."
+
+          def topic_slug(topic):
+              return re.sub(r"[^a-z0-9]+", "-", topic.lower()).strip("-")
+
+          statuses = []
+          raw_items = []
+          for source in SOURCES:
+              try:
+                  items = fetch_source(source)
+                  raw_items.extend(items)
+                  statuses.append({"source": source["name"], "ok": True, "items": len(items), "error": ""})
+              except Exception as exc:
+                  statuses.append({"source": source["name"], "ok": False, "items": 0, "error": str(exc)[:180]})
+
+          seen = set()
+          articles = []
+          for item in raw_items:
+              key = re.sub(r"\W+", "", (item["title"] + urlparse(item["link"]).path).lower())[:160]
+              if key in seen:
+                  continue
+              seen.add(key)
+              item = classify(item)
+              if item["date"] >= cutoff and item["relevance"] >= 3:
+                  item["cgi_angle"] = cgi_angle(item)
+                  articles.append(item)
+
+          if not articles:
+              # No fake news: show an explicit status card rather than pretending there are live articles.
+              articles = [{
+                  "title": "Nog geen live artikelen opgehaald",
+                  "link": "https://github.com/",
+                  "date": now,
+                  "summary": "De workflow is technisch gepubliceerd, maar er zijn nog geen actuele artikelen opgehaald uit de RSS-bronnen. Controleer latest/status.json voor bronstatus en draai de workflow opnieuw.",
+                  "source": "Systeemcontrole",
+                  "source_group": "Status",
+                  "categories": [],
+                  "ai_score": 0,
+                  "retail_score": 0,
+                  "topics": ["Research & Market Signals"],
+                  "primary_topic": "Research & Market Signals",
+                  "relevance": 0,
+                  "cgi_angle": "Goed om te weten: de pagina staat live, maar de contentfeed moet nog succesvol artikelen ophalen. Zodra RSS-bronnen bereikbaar zijn, verschijnen hier echte artikelen van de afgelopen week.",
+              }]
+
+          articles.sort(key=lambda x: (x.get("relevance", 0), x["date"]), reverse=True)
+          articles = articles[:MAX_ITEMS]
+          retail_articles = [a for a in articles if "Retail & Consumer Services" in a.get("topics", [])]
+
+          topic_counts = {topic: 0 for topic in TOPICS}
+          for a in articles:
+              for t in a.get("topics", []):
+                  if t in topic_counts:
+                      topic_counts[t] += 1
+
+          top_topics = [t for t, c in sorted(topic_counts.items(), key=lambda kv: kv[1], reverse=True) if c > 0][:3]
+          if top_topics:
+              week_summary = "Deze week vallen vooral de ontwikkelingen op rond " + ", ".join(top_topics[:-1]) + (" en " + top_topics[-1] if len(top_topics) > 1 else top_topics[0]) + ". Voor CGI Retail & Consumer Services is de rode draad: AI beweegt verder van losse experimenten naar praktische toepassingen, platformkeuzes, governance en klantgerichte operatie."
+          else:
+              week_summary = "Deze week zijn er nog onvoldoende actuele artikelen opgehaald om een inhoudelijke trend te duiden. Controleer de bronstatus en draai de workflow opnieuw."
+
+          def fmt_date(d):
+              return d.astimezone(AMSTERDAM).strftime("%d-%m-%Y")
+
+          def card_html(article, rank=None):
+              topics = article.get("topics", [])
+              tags = "".join(f'<button class="tag" data-filter="{html.escape(t)}">{html.escape(t)}</button>' for t in topics[:4])
+              primary = article.get("primary_topic", topics[0] if topics else "Research & Market Signals")
+              initials = "".join([part[0] for part in primary.split() if part[:1].isalpha()])[:3].upper() or "AI"
+              source = html.escape(article.get("source", ""))
+              title = html.escape(article.get("title", ""))
+              summary = html.escape(article.get("summary", ""))
+              angle = html.escape(article.get("cgi_angle", ""))
+              link = html.escape(article.get("link", "#"), quote=True)
+              topic_attr = "|".join(topics)
+              rank_html = f'<span class="rank">#{rank}</span>' if rank else ""
+              return f'''
+              <article class="card" data-topics="{html.escape(topic_attr)}">
+                <div class="visual visual-{topic_slug(primary)}" aria-hidden="true">
+                  <div class="visual-grid"></div>
+                  <div class="visual-orb one"></div>
+                  <div class="visual-orb two"></div>
+                  <div class="visual-copy"><span>{html.escape(primary)}</span><strong>{html.escape(initials)}</strong></div>
+                </div>
+                <div class="card-body">
+                  <div class="meta">{rank_html}<span>{source}</span><span>{fmt_date(article["date"])}</span></div>
+                  <h3>{title}</h3>
+                  <p class="summary">{summary}</p>
+                  <div class="angle"><strong>CGI Angle:</strong> {angle}</div>
+                  <div class="tags">{tags}</div>
+                  <a class="source-button" href="{link}" target="_blank" rel="noopener noreferrer">Lees bronartikel →</a>
+                </div>
+              </article>
+              '''
+
+          top_cards = "\n".join(card_html(a, i+1) for i, a in enumerate(articles[:6]))
+          all_cards = "\n".join(card_html(a) for a in articles)
+          retail_cards = "\n".join(card_html(a) for a in retail_articles[:30]) or '<div class="empty">Geen aparte Retail & Consumer Services-artikelen gevonden in de afgelopen week. Retailrelevante AI-artikelen kunnen wel tussen de algemene resultaten staan.</div>'
+          filter_buttons = '<button class="filter active" data-filter="all">Alle artikelen</button>' + "\n".join(
+              f'<button class="filter" data-filter="{html.escape(t)}">{html.escape(t)} <span>{topic_counts.get(t, 0)}</span></button>' for t in TOPICS if topic_counts.get(t, 0) > 0
+          )
+
+          template = Template(r'''<!doctype html>
+          <html lang="nl">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta name="robots" content="noindex">
+            <title>CGI AI & Retail Weekstream</title>
+            <style>
+              :root{--cgi-red:#e31937;--cgi-purple:#5236ab;--black:#000;--white:#fff;--bg:#f6f4f7;--muted:#666;--line:#e8e2ea;--card:#fff;--shadow:0 18px 45px rgba(0,0,0,.10);--radius:24px;}
+              *{box-sizing:border-box} body{margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:var(--bg);color:var(--black);line-height:1.45} a{color:inherit}.locked .page{display:none}.gate{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(135deg,#000 0%,#231b3f 48%,#e31937 100%);z-index:99;padding:24px}.unlocked .gate{display:none}.gate-panel{width:min(560px,100%);background:#fff;border-radius:28px;box-shadow:var(--shadow);padding:34px}.brand{display:flex;align-items:center;gap:12px}.logo{width:58px;height:58px;background:var(--cgi-red);color:#fff;display:grid;place-items:center;font-weight:900;letter-spacing:-1px;border-radius:14px}.brand h1{font-size:21px;margin:0}.gate-panel p{color:#555}.gate-form{display:flex;gap:10px;margin-top:20px}.gate-form input{flex:1;border:1px solid #d8d0dc;border-radius:14px;padding:14px 15px;font-size:16px}.gate-form button,.source-button,.filter{cursor:pointer}.gate-form button{border:0;border-radius:14px;background:var(--cgi-red);color:#fff;font-weight:800;padding:14px 18px}.gate-error{color:var(--cgi-red);font-weight:700;min-height:22px}.hero{background:linear-gradient(135deg,#e31937 0%,#a82465 50%,#5236ab 100%);color:#fff;padding:34px 24px 48px}.wrap{width:min(1180px,calc(100% - 32px));margin:0 auto}.topbar{display:flex;justify-content:space-between;gap:18px;align-items:center}.wordmark{display:flex;align-items:center;gap:12px;font-weight:900}.wordmark .logo{background:#fff;color:var(--cgi-red)}.version{font-size:12px;border:1px solid rgba(255,255,255,.5);padding:8px 10px;border-radius:999px}.hero h1{font-size:clamp(36px,6vw,72px);letter-spacing:-.06em;line-height:.95;margin:42px 0 18px;max-width:920px}.hero p{font-size:clamp(17px,2vw,22px);max-width:880px;margin:0;color:rgba(255,255,255,.92)}.stat{display:inline-flex;margin-top:26px;background:#fff;color:#000;border-radius:999px;padding:10px 16px;font-weight:900}.main{margin-top:-26px;padding-bottom:60px}.panel{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:24px;margin-bottom:22px}.panel h2{font-size:28px;letter-spacing:-.03em;margin:0 0 10px}.filters{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.filter{border:1px solid #ddd4e5;background:#fff;color:#111;border-radius:999px;padding:10px 13px;font-weight:800}.filter span{color:#777;font-weight:700}.filter.active{background:var(--black);color:#fff;border-color:#000}.filter.active span{color:#fff}.shown-count{color:#666;margin-top:12px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.card{background:var(--card);border:1px solid var(--line);border-radius:24px;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,.06);display:flex;flex-direction:column;min-height:100%}.visual{position:relative;aspect-ratio:16/9;overflow:hidden;background:linear-gradient(135deg,#e31937,#5236ab);color:#fff}.visual-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.18) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.18) 1px,transparent 1px);background-size:32px 32px;opacity:.34}.visual-orb{position:absolute;border-radius:50%;filter:blur(2px);background:rgba(255,255,255,.25)}.visual-orb.one{width:120px;height:120px;right:-22px;top:-28px}.visual-orb.two{width:88px;height:88px;left:22px;bottom:-28px}.visual-copy{position:absolute;inset:18px;display:flex;flex-direction:column;justify-content:space-between}.visual-copy span{align-self:flex-start;background:rgba(0,0,0,.35);padding:7px 10px;border-radius:999px;font-weight:800;font-size:12px}.visual-copy strong{font-size:58px;line-height:.8;letter-spacing:-.08em}.visual-governance-risk-responsible-ai{background:linear-gradient(135deg,#000,#5236ab)}.visual-retail-consumer-services{background:linear-gradient(135deg,#e31937,#991f3d)}.visual-data-platforms-cloud{background:linear-gradient(135deg,#5236ab,#000)}.visual-supply-chain-forecasting{background:linear-gradient(135deg,#a82465,#5236ab)}.visual-pricing-merchandising{background:linear-gradient(135deg,#e31937,#ff6a00)}.card-body{padding:18px;display:flex;flex-direction:column;gap:12px;flex:1}.meta{display:flex;flex-wrap:wrap;gap:8px;color:#666;font-size:13px;font-weight:800}.rank{background:#000;color:#fff;border-radius:999px;padding:2px 7px}.card h3{font-size:20px;line-height:1.16;letter-spacing:-.03em;margin:0}.summary{color:#444;margin:0}.angle{background:#faf7fb;border-left:4px solid var(--cgi-purple);border-radius:12px;padding:12px;color:#222;font-size:14px}.tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:auto}.tag{border:0;background:#f0ebf4;border-radius:999px;padding:7px 9px;font-weight:800;font-size:12px;color:#3a2d4c;cursor:pointer}.source-button{display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;margin-top:4px;background:var(--cgi-red);color:#fff;text-decoration:none;border-radius:999px;padding:11px 15px;font-weight:900;box-shadow:0 8px 18px rgba(227,25,55,.25)}.source-button:hover{transform:translateY(-1px)}.section-title{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:34px 0 14px}.section-title h2{margin:0;font-size:30px;letter-spacing:-.04em}.empty{background:#fff;border-radius:18px;padding:20px;color:#555;border:1px dashed #bbb}.footer{padding:30px 0;color:#666}.hidden{display:none!important}@media(max-width:980px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hero h1{max-width:760px}}@media(max-width:680px){.grid{grid-template-columns:1fr}.topbar{align-items:flex-start;flex-direction:column}.gate-form{flex-direction:column}.panel{padding:18px}.hero{padding-top:24px}.visual-copy strong{font-size:48px}}
+            </style>
+          </head>
+          <body class="locked">
+            <div class="gate">
+              <div class="gate-panel">
+                <div class="brand"><div class="logo">CGI</div><h1>AI & Retail Weekstream</h1></div>
+                <p>Voer de toegangscode in om de briefing te openen.</p>
+                <form class="gate-form" id="gateForm"><input id="accessCode" type="password" autocomplete="current-password" placeholder="Toegangscode"><button type="submit">Open briefing</button></form>
+                <div class="gate-error" id="gateError"></div>
+                <p style="font-size:12px;color:#777">Let op: dit is een lichte toegangsdrempel voor een statische GitHub Pages-site, geen enterprise-login.</p>
+              </div>
+            </div>
+            <div class="page">
+              <header class="hero">
+                <div class="wrap">
+                  <div class="topbar"><div class="wordmark"><div class="logo">CGI</div><span>Retail & Consumer Services</span></div><span class="version">$version</span></div>
+                  <h1>AI weekstream voor Retail & Consumer Services</h1>
+                  <p>Een wekelijkse selectie van internationale AI-ontwikkelingen, vertaald naar signalen die relevant kunnen zijn voor CGI en haar retail- en consumer-services-klanten.</p>
+                  <div class="stat">$article_count relevante artikelen</div>
+                </div>
+              </header>
+              <main class="main wrap">
+                <section class="panel">
+                  <h2>Weeksamenvatting</h2>
+                  <p>$week_summary</p>
+                  <p style="color:#666;margin-bottom:0">Laatst gegenereerd: $generated_at · Periode: afgelopen 168 uur · Vaste link: <strong>/latest/</strong></p>
+                </section>
+                <section class="panel">
+                  <h2>Filter op topic</h2>
+                  <div class="filters">$filter_buttons</div>
+                  <div class="shown-count" id="shownCount">$article_count artikelen getoond</div>
+                </section>
+                <section>
+                  <div class="section-title"><h2>Topselectie deze week</h2></div>
+                  <div class="grid top-grid">$top_cards</div>
+                </section>
+                <section>
+                  <div class="section-title"><h2>Alle relevante artikelen</h2></div>
+                  <div class="grid" id="articleGrid">$all_cards</div>
+                </section>
+                <section>
+                  <div class="section-title"><h2>Retail & Consumer Services: relevante artikelen</h2></div>
+                  <div class="grid">$retail_cards</div>
+                </section>
+              </main>
+              <footer class="footer wrap">CGI AI & Retail Weekstream · gegenereerd via GitHub Actions · controle: <a href="status.json">status.json</a></footer>
+            </div>
+            <script>
+              const ACCESS_HASH = "$access_hash";
+              async function sha256(text){const data=new TextEncoder().encode(text);const buf=await crypto.subtle.digest('SHA-256',data);return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');}
+              function unlock(){document.body.classList.remove('locked');document.body.classList.add('unlocked');}
+              if(localStorage.getItem('cgi_weekstream_access_v5')==='ok'){unlock();}
+              document.getElementById('gateForm').addEventListener('submit', async (e)=>{e.preventDefault();const code=document.getElementById('accessCode').value;const hash=await sha256(code);if(hash===ACCESS_HASH){localStorage.setItem('cgi_weekstream_access_v5','ok');unlock();}else{document.getElementById('gateError').textContent='Onjuiste toegangscode.';}});
+              const filters=[...document.querySelectorAll('[data-filter]')];
+              const cards=[...document.querySelectorAll('#articleGrid .card')];
+              const shown=document.getElementById('shownCount');
+              function applyFilter(value){filters.forEach(f=>f.classList.toggle('active',f.dataset.filter===value));let count=0;cards.forEach(card=>{const topics=(card.dataset.topics||'').split('|');const show=value==='all'||topics.includes(value);card.classList.toggle('hidden',!show);if(show)count++;});shown.textContent=count+' artikelen getoond';window.scrollTo({top:document.querySelector('.filters').getBoundingClientRect().top+window.scrollY-20,behavior:'smooth'});}
+              filters.forEach(btn=>btn.addEventListener('click',(e)=>{e.preventDefault();applyFilter(btn.dataset.filter);}));
+            </script>
+          </body>
+          </html>''')
+
+          html_output = template.safe_substitute(
+              version=VERSION,
+              access_hash=ACCESS_HASH,
+              article_count=str(len(articles)),
+              generated_at=html.escape(generated_at),
+              week_summary=html.escape(week_summary),
+              filter_buttons=filter_buttons,
+              top_cards=top_cards,
+              all_cards=all_cards,
+              retail_cards=retail_cards,
+          )
+
+          os.makedirs("site/latest", exist_ok=True)
+          with open("site/index.html", "w", encoding="utf-8") as f:
+              f.write(html_output)
+          with open("site/latest/index.html", "w", encoding="utf-8") as f:
+              f.write(html_output)
+
+          status = {
+              "version": VERSION,
+              "generated_at_utc": now.isoformat(),
+              "lookback_hours": LOOKBACK_HOURS,
+              "article_count": len(articles),
+              "retail_article_count": len(retail_articles),
+              "topics": topic_counts,
+              "features": ["login gate", "topic filters", "clickable tags", "CGI Angle", "responsive CGI visuals", "source button", "root and latest"],
+              "sources": statuses,
+          }
+          for path in ["site/status.json", "site/latest/status.json"]:
+              with open(path, "w", encoding="utf-8") as f:
+                  json.dump(status, f, indent=2, ensure_ascii=False)
+          with open("site/DEPLOYMENT_CHECK.txt", "w", encoding="utf-8") as f:
+              f.write(VERSION + "\nRoot and /latest/ were generated by this workflow.\n")
+          with open("site/latest/DEPLOYMENT_CHECK.txt", "w", encoding="utf-8") as f:
+              f.write(VERSION + "\n/latest/ was generated by this workflow.\n")
+          PY
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
