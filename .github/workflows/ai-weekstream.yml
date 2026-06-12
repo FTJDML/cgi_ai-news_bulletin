@@ -1,4 +1,4 @@
-name: CGI AI Retail & Consumer Services Weekstream - embedded source images
+name: CGI AI Retail & Consumer Services Weekstream - embedded source images FIXED
 
 on:
   workflow_dispatch:
@@ -62,7 +62,7 @@ jobs:
           except Exception:
               pass
 
-          VERSION = "v9.0-embedded-source-images"
+          VERSION = "v10.0-embedded-source-images-unpack-fix"
           ACCESS_CODE = "NT2026!"
           AMSTERDAM = ZoneInfo("Europe/Amsterdam")
           NOW = datetime.now(AMSTERDAM)
@@ -91,6 +91,30 @@ jobs:
               {"name":"Digital Commerce 360", "kind":"retail", "url":"https://www.digitalcommerce360.com/feed/"},
               {"name":"NRF", "kind":"retail", "url":"https://nrf.com/rss.xml"},
           ]
+
+          def normalise_source(source):
+              # Hardening: older pasted versions used tuples, newer versions use dicts.
+              # This function avoids any fragile `for name, url in SOURCES` unpacking.
+              if isinstance(source, dict):
+                  return {
+                      "name": source.get("name", "Unknown source"),
+                      "kind": source.get("kind", "ai"),
+                      "url": source.get("url", ""),
+                  }
+              if isinstance(source, (list, tuple)):
+                  if len(source) == 2:
+                      name, url = source
+                      return {"name": str(name), "kind": "ai", "url": str(url)}
+                  if len(source) >= 3:
+                      name, kind, url = source[0], source[1], source[2]
+                      return {"name": str(name), "kind": str(kind), "url": str(url)}
+              raise ValueError(f"Invalid source definition: {source!r}")
+
+          def iter_sources():
+              for source in SOURCES:
+                  normalised = normalise_source(source)
+                  if normalised["url"]:
+                      yield normalised
 
           AI_TERMS = ["ai", "artificial intelligence", "genai", "generative ai", "llm", "language model", "foundation model", "agent", "agents", "automation", "machine learning", "deep learning", "computer vision", "copilot", "chatbot", "robotics", "model", "openai", "anthropic", "gemini", "claude"]
           RETAIL_TERMS = ["retail", "consumer", "commerce", "ecommerce", "e-commerce", "store", "stores", "shopper", "customer", "loyalty", "personalization", "supply chain", "inventory", "pricing", "merchandising", "marketplace", "grocery", "fulfillment", "last-mile", "omnichannel", "checkout", "retail media"]
@@ -352,7 +376,7 @@ jobs:
                   if result:
                       result["attempted_candidates"] = len(candidates)
                       result["failed_before_success"] = reasons[:8]
-                      return result
+                      return result, reasons[:8]
                   reasons.append(reason)
               return None, reasons[:14]
 
@@ -448,7 +472,7 @@ jobs:
 
           feed_status = []
           all_items = []
-          for source in SOURCES:
+          for source in iter_sources():
               items, status = collect_feed(source)
               feed_status.append(status)
               all_items.extend(items)
