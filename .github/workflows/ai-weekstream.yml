@@ -1,4 +1,4 @@
-name: CGI AI Retail & Consumer Services Weekstream - embedded source images FIXED
+name: CGI AI Retail & Consumer Services Weekstream - source images HARD FIX
 
 on:
   workflow_dispatch:
@@ -62,13 +62,14 @@ jobs:
           except Exception:
               pass
 
-          VERSION = "v10.0-embedded-source-images-unpack-fix"
+          VERSION = "v11.0-embedded-source-images-dict-hardfix"
           ACCESS_CODE = "NT2026!"
           AMSTERDAM = ZoneInfo("Europe/Amsterdam")
           NOW = datetime.now(AMSTERDAM)
           UTC_NOW = datetime.now(timezone.utc)
           LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "168"))
           MAX_ARTICLES = int(os.environ.get("MAX_ARTICLES", "28"))
+          print(f"WORKFLOW_VERSION: {VERSION}", flush=True)
 
           ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -367,8 +368,11 @@ jobs:
                   return None, {"url": image_url, "status": f"exception_{type(exc).__name__}:{str(exc)[:180]}"}
 
           def select_embedded_source_image(candidates, article_url):
+              # IMPORTANT: return a dict, never a tuple.
+              # This prevents the recurring "too many values to unpack" crash.
               reasons = []
-              for image_url in dedupe(candidates)[:20]:
+              unique_candidates = dedupe(candidates)[:20]
+              for image_url in unique_candidates:
                   if likely_bad_image_url(image_url):
                       reasons.append({"url": image_url, "status": "skipped_bad_url"})
                       continue
@@ -376,9 +380,9 @@ jobs:
                   if result:
                       result["attempted_candidates"] = len(candidates)
                       result["failed_before_success"] = reasons[:8]
-                      return result, reasons[:8]
+                      return {"ok": True, "image": result, "reasons": reasons[:8]}
                   reasons.append(reason)
-              return None, reasons[:14]
+              return {"ok": False, "image": None, "reasons": reasons[:14]}
 
           def relevance(item):
               text = f"{item['title']} {item.get('summary','')} {' '.join(item.get('categories',[]))}".lower()
@@ -508,8 +512,10 @@ jobs:
               candidates = list(item.get("feed_image_candidates") or [])
               page_candidates, page_status = article_image_candidates(item["url"])
               candidates.extend(page_candidates)
-              image, reasons = select_embedded_source_image(candidates, item["url"])
-              if image:
+              selection = select_embedded_source_image(candidates, item["url"])
+              image = selection.get("image")
+              reasons = selection.get("reasons", [])
+              if selection.get("ok") and image:
                   item["topics"] = classify(item)
                   item["summary_final"] = article_summary(item)
                   item["cgi_angle"] = cgi_angle(item, item["topics"])
