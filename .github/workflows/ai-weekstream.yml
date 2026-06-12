@@ -1,12 +1,12 @@
-name: CGI AI Retail & Consumer Services Weekstream - source images required
+name: CGI AI Retail & Consumer Services Weekstream - source images converted
 
 on:
   workflow_dispatch:
   schedule:
-    # GitHub cron draait in UTC. Deze twee runs vangen zomer- en wintertijd af.
-    # De stap hieronder publiceert alleen als het op dat moment vrijdag 07:30 in Amsterdam is.
-    - cron: "30 5 * * 5"
-    - cron: "30 6 * * 5"
+    # Vrijdag 07:30 Europe/Amsterdam.
+    # Geen extra tijd-guard: als GitHub vertraagt, publiceert hij alsnog.
+    - cron: "30 7 * * 5"
+      timezone: Europe/Amsterdam
 
 permissions:
   contents: read
@@ -25,28 +25,13 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Check publicatievenster
-        id: when
+      - name: Installeer image tooling
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Handmatige run: publiceren toegestaan."
-            exit 0
-          fi
-          python3 - <<'PY'
-          from datetime import datetime
-          from zoneinfo import ZoneInfo
-          import os
-          now = datetime.now(ZoneInfo("Europe/Amsterdam"))
-          ok = now.weekday() == 4 and now.hour == 7 and 20 <= now.minute <= 45
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"run={'true' if ok else 'false'}\n")
-          print(f"Amsterdam time: {now.isoformat()} | publish={ok}")
-          PY
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --upgrade pillow
 
       - name: Build weekstream met echte bronafbeeldingen
-        if: steps.when.outputs.run == 'true'
         shell: bash
         env:
           MIN_SOURCE_IMAGE_ARTICLES: "1"
@@ -55,17 +40,20 @@ jobs:
           import os, re, json, html, hashlib, shutil, sys
           import urllib.request, urllib.parse, urllib.error
           import xml.etree.ElementTree as ET
+          from io import BytesIO
+          from PIL import Image, ImageOps, ImageFile
           from datetime import datetime, timedelta, timezone
           from zoneinfo import ZoneInfo
           from email.utils import parsedate_to_datetime
 
-          VERSION = "v7.0-source-images-required"
+          VERSION = "v8.0-source-images-converted"
           ACCESS_CODE = "NT2026!"
           AMSTERDAM = ZoneInfo("Europe/Amsterdam")
           NOW = datetime.now(AMSTERDAM)
           UTC_NOW = datetime.now(timezone.utc)
           LOOKBACK_HOURS = 168
           MAX_ARTICLES = 40
+          ImageFile.LOAD_TRUNCATED_IMAGES = True
           MIN_SOURCE_IMAGE_ARTICLES = int(os.environ.get("MIN_SOURCE_IMAGE_ARTICLES") or "1")
 
           SOURCES = [
@@ -113,7 +101,9 @@ jobs:
           }
           HEADERS_IMAGE = {
               "User-Agent": HEADERS_HTML["User-Agent"],
-              "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+              # Vraag expliciet om browser-veilige rasterbeelden. Geen AVIF als voorkeur,
+              # omdat sommige CDNs AVIF teruggeven dat daarna verkeerd geserveerd kan worden.
+              "Accept": "image/jpeg,image/png,image/webp,image/apng,image/*;q=0.7,*/*;q=0.3",
               "Accept-Language": HEADERS_HTML["Accept-Language"],
           }
 
@@ -310,6 +300,24 @@ jobs:
                   if path.endswith(ext): return ".jpg" if ext == ".jpeg" else ext
               return ".jpg"
 
+          def normalize_source_image(data, output_dir, slug):
+              """Validate a downloaded source image and write a local JPG that browsers/GitHub Pages serve reliably."""
+              img = Image.open(BytesIO(data))
+              img.load()
+              w, hgt = img.size
+              if w < 420 or hgt < 220:
+                  raise ValueError(f"image_too_small:{w}x{hgt}")
+              # Convert animated/webp/png/jpeg/etc. to one predictable local JPEG.
+              if getattr(img, "is_animated", False):
+                  img.seek(0)
+              img = img.convert("RGB")
+              # Crop to 16:9 so every card has a consistent source image frame.
+              img = ImageOps.fit(img, (1200, 675), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+              filename = f"{slug}.jpg"
+              path = os.path.join(output_dir, filename)
+              img.save(path, format="JPEG", quality=86, optimize=True, progressive=True)
+              return path, img.size
+
           def download_source_image(candidates, article_url, output_dir, slug):
               reasons = []
               for idx, url in enumerate(dedupe(candidates)):
@@ -317,23 +325,24 @@ jobs:
                       reasons.append({"url": url, "status": "skipped_bad_url"})
                       continue
                   try:
-                      data, final_url, ctype = fetch_bytes(url, timeout=20, headers=HEADERS_IMAGE, referer=article_url)
+                      data, final_url, ctype = fetch_bytes(url, timeout=24, headers=HEADERS_IMAGE, referer=article_url)
                       ct = (ctype or "").lower()
-                      if not ("image" in ct or re.search(r"\.(jpe?g|png|webp|gif|svg)(\?|$)", final_url.lower())):
+                      if not ("image" in ct or re.search(r"\.(jpe?g|png|webp|gif|avif)(\?|$)", final_url.lower())):
                           reasons.append({"url": url, "status": f"not_image:{ctype}"})
                           continue
-                      if len(data) < 8000 and "svg" not in ct:
-                          reasons.append({"url": url, "status": f"too_small:{len(data)}"})
+                      if len(data) < 10000:
+                          reasons.append({"url": url, "status": f"too_small_bytes:{len(data)}"})
                           continue
-                      ext = image_ext(ctype, final_url)
-                      filename = f"{slug}{ext}"
-                      path = os.path.join(output_dir, filename)
-                      with open(path, "wb") as f:
-                          f.write(data)
-                      return {"ok": True, "path": f"assets/images/{filename}", "url": final_url, "method_index": idx, "bytes": len(data), "content_type": ctype, "reasons": reasons}
+                      try:
+                          path, size = normalize_source_image(data, output_dir, slug)
+                      except Exception as conv:
+                          reasons.append({"url": url, "status": f"image_conversion_failed:{type(conv).__name__}:{str(conv)[:160]}", "content_type": ctype, "bytes": len(data)})
+                          continue
+                      filename = os.path.basename(path)
+                      return {"ok": True, "path": f"assets/images/{filename}", "url": final_url, "method_index": idx, "bytes": len(data), "content_type": ctype, "local_format": "jpg", "local_size": size, "reasons": reasons}
                   except Exception as e:
                       reasons.append({"url": url, "status": f"download_failed:{type(e).__name__}:{str(e)[:160]}"})
-              return {"ok": False, "reasons": reasons[:8]}
+              return {"ok": False, "reasons": reasons[:12]}
 
           def parse_feed_items(source):
               log(f"Fetching feed: {source['name']} | {source['url']}")
@@ -630,7 +639,7 @@ jobs:
                 <div class="wrap">
                   <div class="topline"><div class="brand">CGI</div><div class="badge">{VERSION}</div></div>
                   <h1>AI & Retail Weekstream</h1>
-                  <p class="sub">Wekelijkse selectie van internationale AI-ontwikkelingen en Retail & Consumer Services-signalen. Alleen artikelen met succesvol opgehaalde bronafbeeldingen worden getoond.</p>
+                  <p class="sub">Wekelijkse selectie van internationale AI-ontwikkelingen en Retail & Consumer Services-signalen. Alleen artikelen met succesvol opgehaalde en lokaal geconverteerde bronafbeeldingen worden getoond.</p>
                   <div class="stats"><div class="stat"><strong>{len(accepted)}</strong> relevante artikelen</div></div>
                 </div>
               </header>
@@ -653,7 +662,7 @@ jobs:
                   <div class="grid">{retail_html}</div>
                 </section>
               </main>
-              <footer><div class="wrap">Gegenereerd op {h(generated)} Europe/Amsterdam · Iedere kaart gebruikt een lokaal opgeslagen bronafbeelding uit RSS, Open Graph, Twitter Card, JSON-LD of artikelpagina.</div></footer>
+              <footer><div class="wrap">Gegenereerd op {h(generated)} Europe/Amsterdam · Iedere kaart gebruikt een bronafbeelding uit RSS, Open Graph, Twitter Card, JSON-LD of artikelpagina, lokaal opgeslagen als betrouwbare JPG.</div></footer>
             </div>
             <script>
               const ACCESS_CODE = {json.dumps(ACCESS_CODE)};
@@ -699,6 +708,7 @@ jobs:
                   "source_images_downloaded": len(accepted),
                   "fallback_visuals": 0,
                   "strict_source_images": True,
+                  "image_pipeline": "download_source_image_and_convert_to_local_jpg",
                   "articles_rejected_without_source_image": len(rejected),
                   "feed_status": feed_status,
                   "rejected_without_source_image_sample": rejected[:20],
@@ -717,16 +727,13 @@ jobs:
           PY
 
       - name: Configure GitHub Pages
-        if: steps.when.outputs.run == 'true'
         uses: actions/configure-pages@v5
 
       - name: Upload GitHub Pages artifact
-        if: steps.when.outputs.run == 'true'
         uses: actions/upload-pages-artifact@v4
         with:
           path: site
 
       - name: Deploy to GitHub Pages
-        if: steps.when.outputs.run == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
