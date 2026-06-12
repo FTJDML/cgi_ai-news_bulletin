@@ -1,12 +1,10 @@
-name: CGI AI Retail & Consumer Services Weekstream - source images HARD FIX
+name: CGI AI Retail & Consumer Services Weekstream - FINAL source images
 
 on:
   workflow_dispatch:
   schedule:
-    # Iedere vrijdag om 07:30 Europe/Amsterdam.
-    # Geen extra tijd-guard: als GitHub later start, publiceert hij alsnog.
     - cron: "30 7 * * 5"
-      timezone: Europe/Amsterdam
+      timezone: "Europe/Amsterdam"
 
 permissions:
   contents: read
@@ -14,742 +12,702 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: cgi-ai-weekstream-pages
   cancel-in-progress: true
 
 jobs:
-  build-and-publish:
+  build-and-deploy:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Installeer dependencies zonder requirements.txt
-        shell: bash
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install --upgrade requests feedparser beautifulsoup4 pillow pillow-avif-plugin
-
-      - name: Bouw weekstream met embedded bronafbeeldingen
-        shell: bash
-        env:
-          MAX_ARTICLES: "28"
-          LOOKBACK_HOURS: "168"
+      - name: Build static weekstream with embedded source images
         run: |
           python3 - <<'PY'
           import base64
-          import hashlib
+          import datetime as dt
+          import email.utils
           import html
           import json
           import os
           import re
-          import shutil
           import sys
-          import time
-          from datetime import datetime, timedelta, timezone
-          from email.utils import parsedate_to_datetime
-          from io import BytesIO
-          from urllib.parse import urljoin, urlsplit, urlunsplit
-          from zoneinfo import ZoneInfo
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          import xml.etree.ElementTree as ET
 
-          import feedparser
-          import requests
-          from bs4 import BeautifulSoup
-          from PIL import Image, ImageOps, ImageFile
-          try:
-              import pillow_avif  # noqa: F401
-          except Exception:
-              pass
-
-          VERSION = "v11.0-embedded-source-images-dict-hardfix"
+          VERSION = "v12.0-final-source-images-embedded"
           ACCESS_CODE = "NT2026!"
-          AMSTERDAM = ZoneInfo("Europe/Amsterdam")
-          NOW = datetime.now(AMSTERDAM)
-          UTC_NOW = datetime.now(timezone.utc)
-          LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "168"))
-          MAX_ARTICLES = int(os.environ.get("MAX_ARTICLES", "28"))
-          print(f"WORKFLOW_VERSION: {VERSION}", flush=True)
+          LOOKBACK_HOURS = 168
+          MAX_ITEMS_PER_SOURCE = 18
+          MAX_ARTICLES = 60
+          MIN_IMAGE_BYTES = 3500
+          MAX_IMAGE_BYTES = 1400000
+          USER_AGENT = (
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+              "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 "
+              "CGI-AI-Weekstream/12.0"
+          )
 
-          ImageFile.LOAD_TRUNCATED_IMAGES = True
-
-          SOURCES = [
-              {"name":"TechCrunch AI", "kind":"ai", "url":"https://techcrunch.com/category/artificial-intelligence/feed/"},
-              {"name":"The Verge AI", "kind":"ai", "url":"https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"},
-              {"name":"WIRED AI", "kind":"ai", "url":"https://www.wired.com/feed/tag/artificial-intelligence/latest/rss"},
-              {"name":"MIT News AI", "kind":"ai", "url":"https://news.mit.edu/rss/topic/artificial-intelligence2"},
-              {"name":"OpenAI News", "kind":"ai", "url":"https://openai.com/news/rss.xml"},
-              {"name":"Google DeepMind Blog", "kind":"ai", "url":"https://deepmind.google/blog/rss.xml"},
-              {"name":"Anthropic News", "kind":"ai", "url":"https://www.anthropic.com/news/rss.xml"},
-              {"name":"VentureBeat AI", "kind":"ai", "url":"https://venturebeat.com/category/ai/feed/"},
-              {"name":"The Decoder", "kind":"ai", "url":"https://the-decoder.com/feed/"},
-              {"name":"NVIDIA Blog", "kind":"ai", "url":"https://blogs.nvidia.com/blog/category/deep-learning/feed/"},
-              {"name":"Microsoft AI Blog", "kind":"ai", "url":"https://blogs.microsoft.com/ai/feed/"},
-              {"name":"Retail Dive", "kind":"retail", "url":"https://www.retaildive.com/feeds/news/"},
-              {"name":"Modern Retail", "kind":"retail", "url":"https://www.modernretail.co/feed/"},
-              {"name":"RetailWire", "kind":"retail", "url":"https://retailwire.com/feed/"},
-              {"name":"Grocery Dive", "kind":"retail", "url":"https://www.grocerydive.com/feeds/news/"},
-              {"name":"Digital Commerce 360", "kind":"retail", "url":"https://www.digitalcommerce360.com/feed/"},
-              {"name":"NRF", "kind":"retail", "url":"https://nrf.com/rss.xml"},
+          FEEDS = [
+              {"source": "TechCrunch AI", "url": "https://techcrunch.com/category/artificial-intelligence/feed/", "kind": "ai"},
+              {"source": "The Verge AI", "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", "kind": "ai"},
+              {"source": "WIRED AI", "url": "https://www.wired.com/feed/tag/artificial-intelligence/latest/rss", "kind": "ai"},
+              {"source": "OpenAI News", "url": "https://openai.com/news/rss.xml", "kind": "ai"},
+              {"source": "Google DeepMind Blog", "url": "https://deepmind.google/blog/rss.xml", "kind": "ai"},
+              {"source": "VentureBeat AI", "url": "https://venturebeat.com/category/ai/feed/", "kind": "ai"},
+              {"source": "The Decoder", "url": "https://the-decoder.com/feed/", "kind": "ai"},
+              {"source": "NVIDIA Blog", "url": "https://blogs.nvidia.com/blog/category/deep-learning/feed/", "kind": "ai"},
+              {"source": "Retail Dive", "url": "https://www.retaildive.com/feeds/news/", "kind": "retail"},
+              {"source": "Modern Retail", "url": "https://www.modernretail.co/feed/", "kind": "retail"},
+              {"source": "RetailWire", "url": "https://retailwire.com/feed/", "kind": "retail"},
+              {"source": "Grocery Dive", "url": "https://www.grocerydive.com/feeds/news/", "kind": "retail"},
+              {"source": "Digital Commerce 360", "url": "https://www.digitalcommerce360.com/feed/", "kind": "retail"},
+              {"source": "NRF", "url": "https://nrf.com/rss.xml", "kind": "retail"},
           ]
 
-          def normalise_source(source):
-              # Hardening: older pasted versions used tuples, newer versions use dicts.
-              # This function avoids any fragile `for name, url in SOURCES` unpacking.
-              if isinstance(source, dict):
-                  return {
-                      "name": source.get("name", "Unknown source"),
-                      "kind": source.get("kind", "ai"),
-                      "url": source.get("url", ""),
-                  }
-              if isinstance(source, (list, tuple)):
-                  if len(source) == 2:
-                      name, url = source
-                      return {"name": str(name), "kind": "ai", "url": str(url)}
-                  if len(source) >= 3:
-                      name, kind, url = source[0], source[1], source[2]
-                      return {"name": str(name), "kind": str(kind), "url": str(url)}
-              raise ValueError(f"Invalid source definition: {source!r}")
-
-          def iter_sources():
-              for source in SOURCES:
-                  normalised = normalise_source(source)
-                  if normalised["url"]:
-                      yield normalised
-
-          AI_TERMS = ["ai", "artificial intelligence", "genai", "generative ai", "llm", "language model", "foundation model", "agent", "agents", "automation", "machine learning", "deep learning", "computer vision", "copilot", "chatbot", "robotics", "model", "openai", "anthropic", "gemini", "claude"]
-          RETAIL_TERMS = ["retail", "consumer", "commerce", "ecommerce", "e-commerce", "store", "stores", "shopper", "customer", "loyalty", "personalization", "supply chain", "inventory", "pricing", "merchandising", "marketplace", "grocery", "fulfillment", "last-mile", "omnichannel", "checkout", "retail media"]
-          TECH_RETAIL_TERMS = ["ai", "automation", "data", "digital", "technology", "platform", "cloud", "analytics", "personalization", "loyalty", "commerce", "ecommerce", "supply chain", "inventory", "pricing", "forecast", "media", "marketplace"]
-
-          TOPICS = [
-              ("retail", "Retail & Consumer Services", RETAIL_TERMS),
-              ("agents", "AI Agents & Automation", ["agent", "agents", "autonomous", "workflow", "automation", "copilot"]),
-              ("models", "GenAI & Foundation Models", ["model", "foundation", "llm", "language model", "multimodal", "gemini", "claude", "gpt", "openai", "deepmind", "anthropic"]),
-              ("customer", "Customer & Loyalty", ["customer", "shopper", "loyalty", "personalization", "experience", "crm", "recommendation"]),
-              ("stores", "Store Operations", ["store", "stores", "checkout", "associate", "workforce", "robot", "shelf", "in-store"]),
-              ("supply", "Supply Chain & Forecasting", ["supply chain", "inventory", "forecast", "demand", "warehouse", "fulfillment", "logistics"]),
-              ("pricing", "Pricing & Merchandising", ["pricing", "price", "promotion", "merchandising", "assortment", "markdown"]),
-              ("data", "Data, Platforms & Cloud", ["data", "platform", "cloud", "api", "infrastructure", "chip", "gpu", "database"]),
-              ("governance", "Governance, Risk & Responsible AI", ["governance", "risk", "responsible", "safety", "security", "privacy", "regulation", "policy", "copyright"]),
-              ("research", "Research & Market Signals", ["research", "paper", "benchmark", "study", "report", "trend", "funding", "startup"]),
+          TOPIC_DEFS = [
+              ("Retail & Consumer Services", ["retail", "consumer", "commerce", "store", "shopper", "customer", "loyalty", "grocery", "merchandising", "marketplace", "ecommerce", "omnichannel", "fulfillment"]),
+              ("AI Agents & Automation", ["agent", "agents", "automation", "autonomous", "workflow", "copilot", "assistant"]),
+              ("GenAI & Foundation Models", ["generative", "genai", "foundation model", "llm", "model", "multimodal", "chatgpt", "claude", "gemini", "openai", "deepmind"]),
+              ("Customer & Loyalty", ["customer", "loyalty", "personalization", "personalisation", "recommendation", "experience", "cx", "crm"]),
+              ("Store Operations", ["store", "checkout", "associate", "workforce", "inventory", "shelf", "loss prevention", "service"]),
+              ("Supply Chain & Forecasting", ["supply chain", "forecast", "forecasting", "demand", "warehouse", "logistics", "inventory"]),
+              ("Pricing & Merchandising", ["pricing", "promotion", "merchandising", "markdown", "assortment", "retail media", "advertising"]),
+              ("Data, Platforms & Cloud", ["data", "platform", "cloud", "api", "infrastructure", "chip", "gpu", "nvidia", "database"]),
+              ("Governance, Risk & Responsible AI", ["governance", "risk", "responsible", "safety", "security", "privacy", "regulation", "compliance", "trust"]),
+              ("Research & Market Signals", ["research", "paper", "benchmark", "study", "report", "funding", "startup", "market"]),
           ]
 
-          BAD_IMAGE_WORDS = ["logo", "favicon", "icon", "sprite", "avatar", "author", "profile", "placeholder", "blank", "transparent", "pixel", "tracking", "badge", "app-store", "play-store", "newsletter", "ad-"]
-          SESSION = requests.Session()
-          SESSION.headers.update({
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
-              "Accept-Language": "en-US,en;q=0.9,nl;q=0.8",
-          })
+          AI_TERMS = [
+              "ai", "artificial intelligence", "generative", "genai", "machine learning", "model", "llm",
+              "agent", "automation", "chatgpt", "openai", "deepmind", "anthropic", "nvidia", "copilot",
+              "computer vision", "recommendation", "personalization", "forecasting", "algorithm"
+          ]
+          RETAIL_TERMS = TOPIC_DEFS[0][1]
 
-          def log(msg):
-              print(msg, flush=True)
+          def now_utc():
+              return dt.datetime.now(dt.timezone.utc)
 
-          def ensure_dir(path):
-              os.makedirs(path, exist_ok=True)
+          def local_name(tag):
+              return tag.split("}", 1)[-1].lower() if "}" in tag else tag.lower()
 
-          def h(value):
-              return html.escape(str(value or ""), quote=True)
-
-          def clean_text(value):
+          def strip_html(value):
               if not value:
                   return ""
-              text = BeautifulSoup(str(value), "html.parser").get_text(" ")
-              text = html.unescape(text)
-              return re.sub(r"\s+", " ", text).strip()
+              value = re.sub(r"(?is)<script.*?</script>", " ", value)
+              value = re.sub(r"(?is)<style.*?</style>", " ", value)
+              value = re.sub(r"(?s)<[^>]+>", " ", value)
+              value = html.unescape(value)
+              return re.sub(r"\s+", " ", value).strip()
 
-          def dedupe(items):
-              seen = set()
-              out = []
-              for item in items:
-                  if not item:
-                      continue
-                  item = str(item).strip()
-                  if item and item not in seen:
-                      seen.add(item)
-                      out.append(item)
-              return out
+          def clean_spaces(value):
+              return re.sub(r"\s+", " ", value or "").strip()
 
-          def canonical_url(url):
+          def limit_text(value, n=260):
+              value = clean_spaces(value)
+              if len(value) <= n:
+                  return value
+              cut = value[: n - 1].rsplit(" ", 1)[0]
+              return cut + "..."
+
+          def text_of_child(node, names):
+              names = {n.lower() for n in names}
+              for child in list(node):
+                  if local_name(child.tag) in names and child.text:
+                      return clean_spaces(child.text)
+              return ""
+
+          def parse_date(value):
+              if not value:
+                  return None
+              value = clean_spaces(value)
               try:
-                  parts = urlsplit(url)
-                  return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", "")).lower()
+                  parsed = email.utils.parsedate_to_datetime(value)
+                  if parsed.tzinfo is None:
+                      parsed = parsed.replace(tzinfo=dt.timezone.utc)
+                  return parsed.astimezone(dt.timezone.utc)
               except Exception:
-                  return (url or "").lower()
+                  pass
+              try:
+                  fixed = value.replace("Z", "+00:00")
+                  parsed = dt.datetime.fromisoformat(fixed)
+                  if parsed.tzinfo is None:
+                      parsed = parsed.replace(tzinfo=dt.timezone.utc)
+                  return parsed.astimezone(dt.timezone.utc)
+              except Exception:
+                  return None
 
-          def abs_url(url, base):
+          def http_get(url, max_bytes=2000000, referer=None):
+              headers = {
+                  "User-Agent": USER_AGENT,
+                  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                  "Accept-Language": "en-US,en;q=0.9,nl;q=0.8",
+                  "Cache-Control": "no-cache",
+              }
+              if referer:
+                  headers["Referer"] = referer
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=20) as resp:
+                  data = resp.read(max_bytes + 1)
+                  if len(data) > max_bytes:
+                      raise ValueError("response too large")
+                  info = resp.info()
+                  final_url = resp.geturl()
+              return data, info, final_url
+
+          def fetch_text(url, max_bytes=2000000):
+              data, info, final_url = http_get(url, max_bytes=max_bytes)
+              ctype = info.get("Content-Type", "")
+              charset = "utf-8"
+              m = re.search(r"charset=([A-Za-z0-9_\-]+)", ctype)
+              if m:
+                  charset = m.group(1)
+              try:
+                  text = data.decode(charset, errors="replace")
+              except Exception:
+                  text = data.decode("utf-8", errors="replace")
+              return text, final_url
+
+          def extract_attrs(tag):
+              attrs = {}
+              for m in re.finditer(r"([A-Za-z_:.-]+)\s*=\s*(['\"])(.*?)\2", tag, re.S):
+                  attrs[m.group(1).lower()] = html.unescape(m.group(3).strip())
+              return attrs
+
+          def absolutize(url, base):
               if not url:
                   return ""
-              url = html.unescape(str(url)).strip().strip('"\'')
+              url = html.unescape(url.strip())
               if url.startswith("//"):
                   return "https:" + url
-              return urljoin(base, url)
+              return urllib.parse.urljoin(base, url)
 
-          def parse_entry_date(entry):
-              for key in ["published_parsed", "updated_parsed", "created_parsed"]:
-                  value = entry.get(key)
-                  if value:
-                      try:
-                          return datetime(*value[:6], tzinfo=timezone.utc)
-                      except Exception:
-                          pass
-              for key in ["published", "updated", "created"]:
-                  value = entry.get(key)
-                  if value:
-                      try:
-                          dt = parsedate_to_datetime(value)
-                          if dt.tzinfo is None:
-                              dt = dt.replace(tzinfo=timezone.utc)
-                          return dt.astimezone(timezone.utc)
-                      except Exception:
-                          pass
-              return None
+          def normalize_url(url):
+              if not url:
+                  return ""
+              p = urllib.parse.urlsplit(url)
+              return urllib.parse.urlunsplit((p.scheme, p.netloc.lower(), p.path.rstrip("/"), "", ""))
 
-          def likely_bad_image_url(url):
-              low = (url or "").lower()
-              if not low or low.startswith("data:"):
-                  return True
-              return any(word in low for word in BAD_IMAGE_WORDS)
+          def first_link(node, feed_url):
+              for child in list(node):
+                  if local_name(child.tag) == "link":
+                      href = child.attrib.get("href")
+                      if href:
+                          return absolutize(href, feed_url)
+                      if child.text:
+                          return absolutize(child.text, feed_url)
+              return ""
 
-          def parse_srcset(srcset, base):
-              candidates = []
-              for part in (srcset or "").split(","):
+          def image_candidates_from_html_fragment(fragment, base_url, method):
+              out = []
+              if not fragment:
+                  return out
+              for tag in re.findall(r"(?is)<img\b[^>]*>", fragment):
+                  attrs = extract_attrs(tag)
+                  src = attrs.get("src") or attrs.get("data-src") or attrs.get("data-original")
+                  if not src and attrs.get("srcset"):
+                      src = pick_from_srcset(attrs.get("srcset"))
+                  if src:
+                      out.append({"url": absolutize(src, base_url), "method": method})
+              return out
+
+          def pick_from_srcset(srcset):
+              if not srcset:
+                  return ""
+              best_url = ""
+              best_score = -1
+              for part in srcset.split(","):
                   bits = part.strip().split()
                   if not bits:
                       continue
-                  url = abs_url(bits[0], base)
-                  score = 0
+                  url = bits[0]
+                  score = 1
                   if len(bits) > 1:
-                      m = re.search(r"(\d+)", bits[1])
+                      m = re.search(r"(\d+)(w|x)", bits[1])
                       if m:
                           score = int(m.group(1))
-                  candidates.append((score, url))
-              candidates.sort(reverse=True)
-              return [u for _, u in candidates]
+                  if score > best_score:
+                      best_url = url
+                      best_score = score
+              return best_url
 
-          def feed_image_candidates(entry, base_url):
-              urls = []
-              for field in ["media_thumbnail", "media_content"]:
-                  for media in entry.get(field, []) or []:
-                      if isinstance(media, dict):
-                          url = media.get("url")
-                          medium = (media.get("medium") or "").lower()
-                          typ = (media.get("type") or "").lower()
-                          if url and (field == "media_thumbnail" or medium == "image" or "image" in typ or not typ):
-                              urls.append(abs_url(url, base_url))
-              for link in entry.get("links", []) or []:
-                  if isinstance(link, dict):
-                      typ = (link.get("type") or "").lower()
-                      rel = (link.get("rel") or "").lower()
-                      href = link.get("href")
-                      if href and ("image" in typ or rel in ["enclosure", "image_src"]):
-                          urls.append(abs_url(href, base_url))
-              for key in ["summary", "description"]:
-                  fragment = entry.get(key)
-                  if fragment:
-                      soup = BeautifulSoup(str(fragment), "html.parser")
-                      for img in soup.find_all("img"):
-                          if img.get("srcset"):
-                              urls.extend(parse_srcset(img.get("srcset"), base_url))
-                          for attr in ["src", "data-src", "data-original", "data-lazy-src"]:
-                              if img.get(attr):
-                                  urls.append(abs_url(img.get(attr), base_url))
-              return dedupe([u for u in urls if not likely_bad_image_url(u)])
+          def image_candidates_from_xml(node, base_url):
+              out = []
+              fragments = []
+              for elem in node.iter():
+                  lname = local_name(elem.tag)
+                  attrib_lower = {k.lower(): v for k, v in elem.attrib.items()}
+                  if lname in {"content", "thumbnail"} and attrib_lower.get("url"):
+                      out.append({"url": absolutize(attrib_lower["url"], base_url), "method": "rss-media"})
+                  if lname == "enclosure" and attrib_lower.get("url") and "image" in attrib_lower.get("type", ""):
+                      out.append({"url": absolutize(attrib_lower["url"], base_url), "method": "rss-enclosure"})
+                  if lname == "image" and attrib_lower.get("href"):
+                      out.append({"url": absolutize(attrib_lower["href"], base_url), "method": "rss-image"})
+                  if lname in {"description", "encoded", "summary", "content"} and elem.text:
+                      fragments.append(elem.text)
+              for frag in fragments:
+                  out.extend(image_candidates_from_html_fragment(frag, base_url, "rss-html-img"))
+              return out
 
-          def json_find_images(obj):
-              found = []
-              if isinstance(obj, dict):
-                  for key, value in obj.items():
-                      if str(key).lower() == "image":
-                          if isinstance(value, str):
-                              found.append(value)
-                          elif isinstance(value, list):
-                              for item in value:
-                                  if isinstance(item, str):
-                                      found.append(item)
-                                  elif isinstance(item, dict) and isinstance(item.get("url"), str):
-                                      found.append(item["url"])
-                          elif isinstance(value, dict) and isinstance(value.get("url"), str):
-                              found.append(value["url"])
-                      else:
-                          found.extend(json_find_images(value))
-              elif isinstance(obj, list):
-                  for item in obj:
-                      found.extend(json_find_images(item))
-              return found
-
-          def article_image_candidates(article_url):
-              urls = []
-              status = "not_fetched"
+          def collect_page_image_candidates(article_url):
               try:
-                  response = SESSION.get(article_url, timeout=22, allow_redirects=True, headers={"Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"})
-                  status = f"{response.status_code} {response.headers.get('content-type','')}"
-                  response.raise_for_status()
-                  page_url = response.url
-                  soup = BeautifulSoup(response.text, "html.parser")
+                  page, final_url = fetch_text(article_url, max_bytes=2500000)
               except Exception as exc:
-                  return [], f"article_fetch_failed:{type(exc).__name__}:{str(exc)[:160]}"
-
-              for attrs in [
-                  {"property":"og:image"}, {"property":"og:image:url"}, {"property":"og:image:secure_url"},
-                  {"name":"twitter:image"}, {"name":"twitter:image:src"}
-              ]:
-                  for meta in soup.find_all("meta", attrs=attrs):
-                      if meta.get("content"):
-                          urls.append(abs_url(meta.get("content"), page_url))
-
-              for link in soup.find_all("link"):
-                  rel = " ".join(link.get("rel") or []).lower() if isinstance(link.get("rel"), list) else str(link.get("rel") or "").lower()
-                  if "image_src" in rel and link.get("href"):
-                      urls.append(abs_url(link.get("href"), page_url))
-
-              for script in soup.find_all("script", attrs={"type":"application/ld+json"}):
-                  raw = script.string or script.get_text() or ""
+                  return [], [f"article page fetch failed: {type(exc).__name__}: {exc}"]
+              out = []
+              reasons = []
+              for tag in re.findall(r"(?is)<meta\b[^>]*>", page):
+                  attrs = extract_attrs(tag)
+                  key = (attrs.get("property") or attrs.get("name") or "").lower()
+                  content = attrs.get("content") or ""
+                  if key in {"og:image", "og:image:url", "og:image:secure_url", "twitter:image", "twitter:image:src"} and content:
+                      out.append({"url": absolutize(content, final_url), "method": key})
+              for tag in re.findall(r"(?is)<link\b[^>]*>", page):
+                  attrs = extract_attrs(tag)
+                  rel = (attrs.get("rel") or "").lower()
+                  href = attrs.get("href") or ""
+                  if href and rel in {"image_src", "preload"} and ("image" in attrs.get("as", "").lower() or rel == "image_src"):
+                      out.append({"url": absolutize(href, final_url), "method": "link-image"})
+              for script in re.findall(r"(?is)<script[^>]+application/ld\+json[^>]*>(.*?)</script>", page):
+                  script = html.unescape(script.strip())
                   try:
-                      data = json.loads(raw)
-                      for img in json_find_images(data):
-                          urls.append(abs_url(img, page_url))
+                      data = json.loads(script)
                   except Exception:
-                      for match in re.finditer(r"['\"]image['\"]\s*:\s*['\"]([^'\"]+)['\"]", raw, re.I):
-                          urls.append(abs_url(match.group(1), page_url))
-
-              # Extra fallback: eerste grote content-achtige image op de bronpagina.
-              for img in soup.find_all("img")[:80]:
-                  if img.get("srcset"):
-                      urls.extend(parse_srcset(img.get("srcset"), page_url))
-                  attrs = " ".join([str(img.get(a) or "") for a in ["src", "data-src", "data-original", "data-lazy-src", "class", "alt"]])
-                  looks_content = re.search(r"(article|hero|lead|main|photo|image|media|wp-content|uploads|cdn|asset)", attrs, re.I)
-                  width = img.get("width") or ""
-                  if looks_content or re.match(r"^[4-9]\d{2,}$", str(width)):
-                      for attr in ["src", "data-src", "data-original", "data-lazy-src"]:
-                          if img.get(attr):
-                              urls.append(abs_url(img.get(attr), page_url))
-
-              return dedupe([u for u in urls if not likely_bad_image_url(u)]), status
-
-          def encode_source_image(image_url, article_url):
-              reasons = []
-              try:
-                  headers = {
-                      "Accept": "image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8",
-                      "Referer": article_url,
-                  }
-                  response = SESSION.get(image_url, timeout=28, allow_redirects=True, headers=headers)
-                  ctype = response.headers.get("content-type", "")
-                  final_url = response.url
-                  if response.status_code >= 400:
-                      return None, {"url": image_url, "status": f"http_{response.status_code}", "content_type": ctype}
-                  data = response.content
-                  if len(data) < 9000:
-                      return None, {"url": image_url, "status": f"too_small_bytes_{len(data)}", "content_type": ctype}
-                  if "image" not in ctype.lower() and not re.search(r"\.(jpe?g|png|webp|gif|avif)(\?|$)", final_url.lower()):
-                      return None, {"url": image_url, "status": f"not_image_{ctype[:80]}", "content_type": ctype}
-
-                  img = Image.open(BytesIO(data))
-                  if getattr(img, "is_animated", False):
-                      img.seek(0)
-                  img.load()
-                  original_size = img.size
-                  if original_size[0] < 420 or original_size[1] < 220:
-                      return None, {"url": image_url, "status": f"image_too_small_{original_size[0]}x{original_size[1]}", "content_type": ctype}
-                  img = img.convert("RGB")
-                  img = ImageOps.fit(img, (960, 540), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-                  out = BytesIO()
-                  img.save(out, format="JPEG", quality=78, optimize=True, progressive=True)
-                  encoded = base64.b64encode(out.getvalue()).decode("ascii")
-                  return {
-                      "data_uri": "data:image/jpeg;base64," + encoded,
-                      "original_url": final_url,
-                      "original_content_type": ctype,
-                      "original_bytes": len(data),
-                      "original_size": original_size,
-                      "embedded_bytes": len(out.getvalue()),
-                  }, None
-              except Exception as exc:
-                  return None, {"url": image_url, "status": f"exception_{type(exc).__name__}:{str(exc)[:180]}"}
-
-          def select_embedded_source_image(candidates, article_url):
-              # IMPORTANT: return a dict, never a tuple.
-              # This prevents the recurring "too many values to unpack" crash.
-              reasons = []
-              unique_candidates = dedupe(candidates)[:20]
-              for image_url in unique_candidates:
-                  if likely_bad_image_url(image_url):
-                      reasons.append({"url": image_url, "status": "skipped_bad_url"})
                       continue
-                  result, reason = encode_source_image(image_url, article_url)
-                  if result:
-                      result["attempted_candidates"] = len(candidates)
-                      result["failed_before_success"] = reasons[:8]
-                      return {"ok": True, "image": result, "reasons": reasons[:8]}
-                  reasons.append(reason)
-              return {"ok": False, "image": None, "reasons": reasons[:14]}
+                  def walk(obj):
+                      if isinstance(obj, dict):
+                          image = obj.get("image") or obj.get("thumbnailUrl")
+                          if isinstance(image, str):
+                              out.append({"url": absolutize(image, final_url), "method": "json-ld-image"})
+                          elif isinstance(image, dict) and image.get("url"):
+                              out.append({"url": absolutize(image.get("url"), final_url), "method": "json-ld-image"})
+                          elif isinstance(image, list):
+                              for item in image[:3]:
+                                  if isinstance(item, str):
+                                      out.append({"url": absolutize(item, final_url), "method": "json-ld-image"})
+                                  elif isinstance(item, dict) and item.get("url"):
+                                      out.append({"url": absolutize(item.get("url"), final_url), "method": "json-ld-image"})
+                          for value in obj.values():
+                              walk(value)
+                      elif isinstance(obj, list):
+                          for item in obj[:6]:
+                              walk(item)
+                  walk(data)
+              for tag in re.findall(r"(?is)<img\b[^>]*>", page):
+                  attrs = extract_attrs(tag)
+                  altclass = " ".join([attrs.get("alt", ""), attrs.get("class", ""), attrs.get("id", "")]).lower()
+                  if any(bad in altclass for bad in ["logo", "icon", "avatar", "author", "profile", "tracking", "pixel"]):
+                      continue
+                  src = attrs.get("src") or attrs.get("data-src") or attrs.get("data-original")
+                  if not src and attrs.get("srcset"):
+                      src = pick_from_srcset(attrs.get("srcset"))
+                  if src and not src.startswith("data:"):
+                      out.append({"url": absolutize(src, final_url), "method": "page-img"})
+                  if len(out) > 20:
+                      break
+              return out, reasons
 
-          def relevance(item):
-              text = f"{item['title']} {item.get('summary','')} {' '.join(item.get('categories',[]))}".lower()
-              ai = sum(1 for term in AI_TERMS if term in text)
-              retail = sum(1 for term in RETAIL_TERMS if term in text)
-              techretail = sum(1 for term in TECH_RETAIL_TERMS if term in text)
-              if item["source_kind"] == "ai" and ai < 1:
-                  return 0, ai, retail
-              if item["source_kind"] == "retail" and techretail < 1:
-                  return 0, ai, retail
-              score = ai * 3 + retail * 2 + techretail + (3 if item["source_kind"] == "retail" else 0)
-              return score, ai, retail
+          def sniff_mime(data, content_type, url):
+              ctype = (content_type or "").split(";", 1)[0].strip().lower()
+              if ctype.startswith("image/"):
+                  return ctype
+              if data.startswith(b"\xff\xd8\xff"):
+                  return "image/jpeg"
+              if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                  return "image/png"
+              if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+                  return "image/gif"
+              if data[:12].endswith(b"WEBP") or b"WEBP" in data[:16]:
+                  return "image/webp"
+              lower = urllib.parse.urlsplit(url).path.lower()
+              if lower.endswith(".jpg") or lower.endswith(".jpeg"):
+                  return "image/jpeg"
+              if lower.endswith(".png"):
+                  return "image/png"
+              if lower.endswith(".webp"):
+                  return "image/webp"
+              if lower.endswith(".gif"):
+                  return "image/gif"
+              if lower.endswith(".avif"):
+                  return "image/avif"
+              return ""
 
-          def classify(item):
-              text = f"{item['title']} {item.get('summary','')} {' '.join(item.get('categories',[]))}".lower()
-              topics = []
-              for tid, label, terms in TOPICS:
-                  if any(term in text for term in terms):
-                      topics.append({"id": tid, "label": label})
-              if not topics:
-                  topics.append({"id": "research", "label": "Research & Market Signals"})
-              return topics[:4]
+          def looks_bad_image_url(url):
+              lower = url.lower()
+              bad = ["logo", "favicon", "icon", "avatar", "author", "profile", "tracking", "pixel", "sprite"]
+              return any(token in lower for token in bad)
 
-          def cgi_angle(item, topics):
-              topic_ids = {topic["id"] for topic in topics}
-              if "retail" in topic_ids and ("customer" in topic_ids or "pricing" in topic_ids):
-                  return "Relevant voor CGI Retail & Consumer Services omdat dit raakt aan klantwaarde, personalisatie, commerciële besluitvorming en de manier waarop retailers AI vertalen naar concrete omnichannel proposities."
-              if "supply" in topic_ids or "stores" in topic_ids:
-                  return "Relevant voor CGI Retail & Consumer Services omdat dit aanknopingspunten geeft voor gesprekken over operationele efficiency, store execution, forecast accuracy en schaalbare AI in de dagelijkse retailoperatie."
-              if "governance" in topic_ids:
-                  return "Relevant voor CGI omdat klanten AI sneller willen opschalen, maar daarbij vragen hebben over governance, risico, security, compliance en verantwoord gebruik in bestaande IT- en datalandschappen."
-              if "data" in topic_ids:
-                  return "Relevant voor CGI omdat succesvolle AI-adoptie sterk afhankelijk is van datavolwassenheid, platformkeuzes, integratiearchitectuur en cloud-infrastructuur bij retail- en consumer-services-klanten."
-              if "agents" in topic_ids or "models" in topic_ids:
-                  return "Relevant voor CGI omdat nieuwe model- en agentontwikkelingen invloed hebben op klantverwachtingen, delivery-aanpak, automatiseringskansen en toekomstige AI-proposities voor retail- en consumer-services-klanten."
-              return "Relevant om te volgen voor CGI Retail & Consumer Services als markt- en technologiesignaal: het helpt het team scherp te blijven op AI-ontwikkelingen die klantvragen, vendor-roadmaps en proposities kunnen beïnvloeden."
+          def embedded_image_from_candidates(candidates, article_url):
+              seen = set()
+              failures = []
+              for cand in candidates[:28]:
+                  url = absolutize(cand.get("url", ""), article_url)
+                  if not url or url in seen or url.startswith("data:"):
+                      continue
+                  seen.add(url)
+                  if looks_bad_image_url(url):
+                      failures.append({"url": url, "reason": "skipped probable logo/icon/avatar"})
+                      continue
+                  try:
+                      data, info, final_url = http_get(url, max_bytes=MAX_IMAGE_BYTES, referer=article_url)
+                      if len(data) < MIN_IMAGE_BYTES:
+                          failures.append({"url": url, "reason": f"too small: {len(data)} bytes"})
+                          continue
+                      mime = sniff_mime(data, info.get("Content-Type", ""), final_url)
+                      if not mime.startswith("image/"):
+                          failures.append({"url": url, "reason": "not an image"})
+                          continue
+                      if mime == "image/svg+xml":
+                          failures.append({"url": url, "reason": "svg skipped"})
+                          continue
+                      b64 = base64.b64encode(data).decode("ascii")
+                      return {
+                          "ok": True,
+                          "data_uri": f"data:{mime};base64,{b64}",
+                          "mime": mime,
+                          "source_image_url": final_url,
+                          "method": cand.get("method", "unknown"),
+                          "bytes": len(data),
+                          "attempted": len(seen),
+                          "failures_before_success": failures[:8],
+                      }
+                  except Exception as exc:
+                      failures.append({"url": url, "reason": f"{type(exc).__name__}: {exc}"})
+              return {"ok": False, "failures": failures[:16], "attempted": len(seen)}
 
-          def article_summary(item):
-              text = item.get("summary", "")
-              if len(text) > 245:
-                  text = text[:242].rsplit(" ", 1)[0] + "..."
-              if len(text) < 60:
-                  text = "Een relevant signaal uit de internationale AI- en retailnieuwsstroom. Open het bronartikel voor de volledige context en details."
-              return text
-
-          def fmt_date(dt):
-              if not dt:
-                  return "Datum onbekend"
-              return dt.astimezone(AMSTERDAM).strftime("%d %b %Y")
-
-          def collect_feed(source):
-              log(f"FEED: {source['name']} | {source['url']}")
-              status = {"source": source["name"], "ok": False, "url": source["url"], "count": 0}
+          def parse_feed(feed):
+              status = {"source": feed["source"], "ok": False, "items": 0, "error": ""}
               try:
-                  parsed = feedparser.parse(source["url"], request_headers={"User-Agent": SESSION.headers["User-Agent"]})
-                  entries = parsed.entries or []
-                  status.update({"ok": True, "count": len(entries), "bozo": bool(getattr(parsed, "bozo", False))})
+                  xml_text, final_url = fetch_text(feed["url"], max_bytes=2500000)
+                  root = ET.fromstring(xml_text.encode("utf-8"))
               except Exception as exc:
-                  status["error"] = f"{type(exc).__name__}:{str(exc)[:160]}"
+                  status["error"] = f"{type(exc).__name__}: {exc}"
                   return [], status
-
+              nodes = []
+              for node in root.iter():
+                  if local_name(node.tag) in {"item", "entry"}:
+                      nodes.append(node)
               items = []
-              for entry in entries[:45]:
-                  title = clean_text(entry.get("title", ""))
-                  link = entry.get("link") or ""
-                  if not title or not link:
-                      continue
-                  summary = clean_text(entry.get("summary", "") or entry.get("description", ""))
-                  categories = []
-                  for tag in entry.get("tags", []) or []:
-                      term = clean_text(tag.get("term", "")) if isinstance(tag, dict) else clean_text(str(tag))
-                      if term:
-                          categories.append(term)
-                  published = parse_entry_date(entry)
-                  items.append({
-                      "source": source["name"],
-                      "source_kind": source["kind"],
-                      "title": title,
-                      "url": link,
-                      "summary": summary,
-                      "published": published,
-                      "categories": dedupe(categories),
-                      "feed_image_candidates": feed_image_candidates(entry, link),
-                  })
+              for node in nodes[:MAX_ITEMS_PER_SOURCE]:
+                  title = text_of_child(node, ["title"])
+                  link = first_link(node, final_url)
+                  summary = text_of_child(node, ["description", "summary", "encoded", "content"])
+                  date_text = text_of_child(node, ["pubDate", "published", "updated", "date"])
+                  published = parse_date(date_text)
+                  candidates = image_candidates_from_xml(node, final_url)
+                  if title and link:
+                      items.append({
+                          "title": strip_html(title),
+                          "url": link,
+                          "summary_raw": summary,
+                          "summary": limit_text(strip_html(summary), 280),
+                          "published": published,
+                          "source": feed["source"],
+                          "source_kind": feed["kind"],
+                          "rss_image_candidates": candidates,
+                      })
+              status["ok"] = True
+              status["items"] = len(items)
               return items, status
 
-          # Build content
-          if os.path.exists("site"):
-              shutil.rmtree("site")
-          ensure_dir("site")
+          def classify_topics(text, source_kind):
+              low = text.lower()
+              topics = []
+              for topic, kws in TOPIC_DEFS:
+                  if any(kw in low for kw in kws):
+                      topics.append(topic)
+              if source_kind == "retail" and "Retail & Consumer Services" not in topics:
+                  topics.insert(0, "Retail & Consumer Services")
+              if not topics:
+                  topics.append("Research & Market Signals")
+              return topics
 
-          feed_status = []
-          all_items = []
-          for source in iter_sources():
-              items, status = collect_feed(source)
-              feed_status.append(status)
-              all_items.extend(items)
-              time.sleep(0.15)
+          def is_relevant(item, topics):
+              text = f"{item['title']} {item['summary']} {item['source']}".lower()
+              ai_hit = any(term in text for term in AI_TERMS)
+              retail_hit = any(term in text for term in RETAIL_TERMS) or item["source_kind"] == "retail"
+              if item["source_kind"] == "ai":
+                  return True
+              return ai_hit or (retail_hit and any(t in topics for t in ["Data, Platforms & Cloud", "Customer & Loyalty", "Store Operations", "Pricing & Merchandising"]))
 
-          seen = set()
-          unique = []
-          for item in all_items:
-              key = canonical_url(item["url"])
-              if key in seen:
-                  continue
-              seen.add(key)
-              unique.append(item)
+          def cgi_angle(item, topics):
+              if "Retail & Consumer Services" in topics:
+                  if "Customer & Loyalty" in topics:
+                      return "Relevant voor CGI Retail & Consumer Services omdat dit raakt aan personalisatie, klantdata en loyalty. Bruikbaar in klantgesprekken over omnichannel klantbeleving en verantwoord opschalen van AI." 
+                  if "Store Operations" in topics or "Supply Chain & Forecasting" in topics:
+                      return "Relevant voor CGI Retail & Consumer Services omdat dit raakt aan operationele AI-toepassingen: forecasting, voorraad, winkelprocessen en service. Goed startpunt voor gesprekken over data readiness en procesintegratie."
+                  if "Pricing & Merchandising" in topics:
+                      return "Relevant voor CGI Retail & Consumer Services omdat pricing, promoties, assortiment en retail media direct invloed hebben op marge, klantwaarde en commerciële besluitvorming."
+                  return "Relevant voor CGI Retail & Consumer Services omdat het een signaal geeft over hoe retailers en consumer-services organisaties AI inzetten in klantprocessen, platformkeuzes en digitale operatie."
+              if "Governance, Risk & Responsible AI" in topics:
+                  return "Goed om te volgen voor CGI omdat governance, security en responsible AI bepalend zijn voor betrouwbare AI-adoptie bij klanten en voor schaalbare delivery."
+              if "AI Agents & Automation" in topics:
+                  return "Interessant voor CGI omdat agents en automatisering impact hebben op procesontwerp, integratie, service-operatie en toekomstige AI-proposities richting klanten."
+              if "Data, Platforms & Cloud" in topics:
+                  return "Relevant voor CGI omdat platform-, cloud- en datakeuzes bepalen hoe snel klanten AI veilig en betaalbaar kunnen opschalen."
+              return "Goed om te weten voor CGI omdat deze AI-ontwikkeling invloed kan hebben op klantverwachtingen, vendor-roadmaps en toekomstige advies- en deliverygesprekken."
 
-          cutoff = UTC_NOW - timedelta(hours=LOOKBACK_HOURS)
-          relevant = []
-          for item in unique:
-              if item.get("published") and item["published"] < cutoff:
-                  continue
-              score, ai_score, retail_score = relevance(item)
-              if score <= 0:
-                  continue
-              item["score"] = score
-              item["ai_score"] = ai_score
-              item["retail_score"] = retail_score
-              relevant.append(item)
+          def format_date(value):
+              if not value:
+                  return "Datum onbekend"
+              ams = value.astimezone(dt.timezone(dt.timedelta(hours=2)))
+              return ams.strftime("%d-%m-%Y")
 
-          relevant.sort(key=lambda item: (item.get("score", 0), item.get("published") or datetime(1970, 1, 1, tzinfo=timezone.utc)), reverse=True)
+          def article_sort_key(item):
+              return item.get("published") or dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
 
-          accepted = []
-          rejected = []
-          for item in relevant[:110]:
-              candidates = list(item.get("feed_image_candidates") or [])
-              page_candidates, page_status = article_image_candidates(item["url"])
-              candidates.extend(page_candidates)
-              selection = select_embedded_source_image(candidates, item["url"])
-              image = selection.get("image")
-              reasons = selection.get("reasons", [])
-              if selection.get("ok") and image:
-                  item["topics"] = classify(item)
-                  item["summary_final"] = article_summary(item)
-                  item["cgi_angle"] = cgi_angle(item, item["topics"])
-                  item["image_data_uri"] = image["data_uri"]
-                  item["image_original_url"] = image["original_url"]
-                  item["image_original_content_type"] = image["original_content_type"]
-                  item["image_original_bytes"] = image["original_bytes"]
-                  item["image_embedded_bytes"] = image["embedded_bytes"]
-                  accepted.append(item)
-                  log(f"SOURCE IMAGE EMBEDDED: {item['source']} | {item['title'][:80]}")
-              else:
-                  rejected.append({"title": item["title"], "source": item["source"], "url": item["url"], "article_page_status": page_status, "candidate_count": len(candidates), "reasons": reasons})
-                  log(f"REJECTED WITHOUT SOURCE IMAGE: {item['source']} | {item['title'][:80]}")
-              if len(accepted) >= MAX_ARTICLES:
-                  break
+          def html_escape(value):
+              return html.escape(value or "", quote=True)
 
-          topic_counts = {}
-          for item in accepted:
-              for topic in item.get("topics", []):
-                  topic_counts[topic["label"]] = topic_counts.get(topic["label"], 0) + 1
-          top_topics = [label for label, count in sorted(topic_counts.items(), key=lambda kv: kv[1], reverse=True)[:3]]
-          if accepted and top_topics:
-              week_summary = "Deze week laat de internationale AI-nieuwsstroom vooral beweging zien rond " + ", ".join(t.lower() for t in top_topics) + ". Voor CGI Retail & Consumer Services zijn vooral artikelen relevant die raken aan klantinteractie, operationele retailprocessen, dataplatformen, governance en de vertaling van AI naar schaalbare klantoplossingen."
-          elif accepted:
-              week_summary = "Deze week zijn er meerdere relevante AI- en retailontwikkelingen gevonden met bruikbare bronafbeeldingen. Gebruik de filters om per thema door de briefing te gaan."
-          else:
-              week_summary = "Er zijn deze run geen artikelen gepubliceerd, omdat geen enkel relevant artikel een bronafbeelding opleverde die succesvol kon worden gedownload en in de HTML kon worden ingebed."
+          def build_articles():
+              all_items = []
+              statuses = []
+              cutoff = now_utc() - dt.timedelta(hours=LOOKBACK_HOURS)
+              print("WORKFLOW_VERSION:", VERSION)
+              for feed in FEEDS:
+                  print(f"FEED: {feed['source']} | {feed['url']}")
+                  items, status = parse_feed(feed)
+                  statuses.append(status)
+                  for item in items:
+                      if item.get("published") and item["published"] < cutoff:
+                          continue
+                      topics = classify_topics(f"{item['title']} {item['summary']} {item['source']}", item["source_kind"])
+                      if not is_relevant(item, topics):
+                          continue
+                      item["topics"] = topics
+                      item["cgi_angle"] = cgi_angle(item, topics)
+                      all_items.append(item)
+              dedup = {}
+              for item in all_items:
+                  key = normalize_url(item["url"]) or item["title"].lower()
+                  if key not in dedup or article_sort_key(item) > article_sort_key(dedup[key]):
+                      dedup[key] = item
+              candidates = sorted(dedup.values(), key=article_sort_key, reverse=True)
+              published = []
+              rejected = []
+              for item in candidates:
+                  page_candidates, page_reasons = collect_page_image_candidates(item["url"])
+                  image_candidates = item.get("rss_image_candidates", []) + page_candidates
+                  image_selection = embedded_image_from_candidates(image_candidates, item["url"])
+                  if image_selection.get("ok"):
+                      item["image"] = image_selection
+                      published.append(item)
+                      print(f"IMAGE_OK: {item['source']} | {item['title'][:70]} | {image_selection.get('method')} | {image_selection.get('mime')} | {image_selection.get('bytes')} bytes")
+                  else:
+                      rejected.append({
+                          "source": item["source"],
+                          "title": item["title"],
+                          "url": item["url"],
+                          "reason": "no downloadable source image",
+                          "page_reasons": page_reasons[:3],
+                          "image_failures": image_selection.get("failures", [])[:6],
+                      })
+                      print(f"IMAGE_REJECT: {item['source']} | {item['title'][:70]}")
+                  if len(published) >= MAX_ARTICLES:
+                      break
+              return published, rejected, statuses
 
-          def render_cards(items, grid_id=None):
+          def build_html(articles, rejected, statuses):
+              generated = now_utc()
+              retail_count = sum(1 for a in articles if "Retail & Consumer Services" in a["topics"])
+              topic_counts = {topic: 0 for topic, _ in TOPIC_DEFS}
+              for a in articles:
+                  for t in a["topics"]:
+                      topic_counts[t] = topic_counts.get(t, 0) + 1
               cards = []
-              for item in items:
-                  topics = item.get("topics", [])
-                  topic_ids = " ".join(topic["id"] for topic in topics)
-                  tags = "".join(f'<button class="tag" data-filter="{h(topic["id"])}">{h(topic["label"])}</button>' for topic in topics)
+              for idx, a in enumerate(articles, 1):
+                  topics_str = "|".join(a["topics"])
+                  tags = "".join(f'<button class="tag" data-filter="{html_escape(t)}">{html_escape(t)}</button>' for t in a["topics"][:4])
+                  summary = a["summary"] or "Korte samenvatting niet beschikbaar in de feed; open de bron voor details."
                   cards.append(f'''
-                  <article class="card" data-topics="{h(topic_ids)}">
-                    <div class="visual">
-                      <img src="{item['image_data_uri']}" alt="Bronafbeelding bij {h(item['title'])}" loading="lazy">
-                      <div class="image-badge">Bronafbeelding · embedded</div>
-                    </div>
-                    <div class="card-body">
-                      <div class="meta"><span>{h(item['source'])}</span><span>{h(fmt_date(item.get('published')))}</span></div>
-                      <h3>{h(item['title'])}</h3>
-                      <p class="summary">{h(item['summary_final'])}</p>
-                      <div class="angle"><strong>CGI Angle:</strong> {h(item['cgi_angle'])}</div>
-                      <div class="tags">{tags}</div>
-                      <a class="source-button" href="{h(item['url'])}" target="_blank" rel="noopener noreferrer">Lees bronartikel →</a>
-                    </div>
-                  </article>''')
-              return "\n".join(cards)
-
-          filter_buttons = ['<button class="filter active" data-filter="all">Alle artikelen</button>']
-          for topic_id, label, terms in TOPICS:
-              count = sum(1 for item in accepted if any(topic["id"] == topic_id for topic in item.get("topics", [])))
-              if count:
-                  filter_buttons.append(f'<button class="filter" data-filter="{h(topic_id)}">{h(label)} <span>{count}</span></button>')
-          filters_html = "\n".join(filter_buttons)
-          all_cards = render_cards(accepted)
-          retail_items = [item for item in accepted if any(topic["id"] == "retail" for topic in item.get("topics", []))]
-          retail_cards = render_cards(retail_items or accepted[:6])
-          generated = NOW.strftime("%d %B %Y %H:%M")
-          status = {
-              "version": VERSION,
-              "generated_at": NOW.isoformat(),
-              "lookback_hours": LOOKBACK_HOURS,
-              "articles_published": len(accepted),
-              "source_images_embedded": len(accepted),
-              "fallback_visuals": 0,
-              "strict_source_images": True,
-              "image_pipeline": "download_source_image_convert_to_jpg_embed_as_data_uri",
-              "no_external_image_paths": True,
-              "articles_rejected_without_source_image": len(rejected),
-              "feed_status": feed_status,
-              "published_images": [{"title": item["title"], "source": item["source"], "page_url": item["url"], "source_image_url": item["image_original_url"], "embedded_bytes": item["image_embedded_bytes"]} for item in accepted],
-              "rejected_without_source_image_sample": rejected[:25],
-          }
-
-          status_json_escaped = h(json.dumps(status, ensure_ascii=False, indent=2, default=str))
-          page_note = "Iedere zichtbare artikelkaart gebruikt een echte bronafbeelding die tijdens de workflow is gedownload, naar JPG is geconverteerd en direct in deze HTML is ingebed. Er zijn geen losse image-paden meer die op GitHub Pages kunnen breken."
-          if not accepted:
-              cards_section = f'''<section class="section panel warning"><h2>Geen artikelen gepubliceerd</h2><p>{h(week_summary)}</p><p>Open <code>status.json</code> voor de technische redenen per artikel.</p></section>'''
-          else:
-              cards_section = f'''
-                <section class="section">
-                  <h2>Alle relevante artikelen</h2>
-                  <div class="grid" id="articleGrid">{all_cards}</div>
-                  <div class="empty" id="empty">Geen artikelen binnen dit filter.</div>
-                </section>
-                <section class="section">
-                  <h2>Retail & Consumer Services: relevante artikelen</h2>
-                  <div class="grid">{retail_cards}</div>
-                </section>'''
-
-          html_doc = f'''<!doctype html>
+                    <article class="card" data-topics="{html_escape(topics_str)}">
+                      <div class="visual">
+                        <img src="{a['image']['data_uri']}" alt="Bronafbeelding bij {html_escape(a['title'])}" loading="lazy">
+                        <span class="image-label">Bronbeeld - {html_escape(a['image'].get('method', 'source'))}</span>
+                      </div>
+                      <div class="card-body">
+                        <div class="meta"><span>{html_escape(a['source'])}</span><span>{html_escape(format_date(a.get('published')))}</span></div>
+                        <h3>{html_escape(a['title'])}</h3>
+                        <p class="summary">{html_escape(summary)}</p>
+                        <div class="cgi"><strong>CGI Angle:</strong> {html_escape(a['cgi_angle'])}</div>
+                        <div class="tags">{tags}</div>
+                        <a class="source-button" href="{html_escape(a['url'])}" target="_blank" rel="noopener noreferrer">Lees bronartikel -></a>
+                      </div>
+                    </article>
+                  ''')
+              filters = ['Alle artikelen'] + [topic for topic, _ in TOPIC_DEFS if topic_counts.get(topic, 0) > 0]
+              filter_buttons = "".join(f'<button class="filter {'active' if i == 0 else ''}" data-filter="{html_escape(f)}">{html_escape(f)}<span>{len(articles) if f == "Alle artikelen" else topic_counts.get(f,0)}</span></button>' for i, f in enumerate(filters))
+              week_summary = build_week_summary(articles, retail_count)
+              html_doc = f'''<!doctype html>
           <html lang="nl">
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
-            <meta http-equiv="pragma" content="no-cache">
-            <meta http-equiv="expires" content="0">
+            <meta http-equiv="Cache-Control" content="no-store">
             <title>CGI AI & Retail Weekstream</title>
             <style>
-              :root {{ --cgi-red:#e31937; --cgi-purple:#5236ab; --cgi-black:#000; --cgi-white:#fff; --soft:#f6f4f7; --line:#e8e3eb; --text:#111; --muted:#5f5a66; }}
+              :root {{ --cgi-red:#e31937; --cgi-purple:#5236ab; --black:#000; --white:#fff; --soft:#f6f4f8; --line:#e8e4ee; --text:#161316; --muted:#665f6d; }}
               * {{ box-sizing:border-box; }}
-              body {{ margin:0; font-family: Arial, Helvetica, sans-serif; color:var(--text); background:linear-gradient(180deg,#fff 0,#faf8fb 100%); }}
-              .locked {{ overflow:hidden; }}
-              .login {{ position:fixed; inset:0; z-index:99; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,var(--cgi-red),#a82465,var(--cgi-purple)); padding:24px; }}
-              .login-card {{ width:min(520px,100%); background:#fff; border-radius:28px; padding:32px; box-shadow:0 30px 80px rgba(0,0,0,.28); }}
-              .logo {{ font-weight:900; letter-spacing:-2px; font-size:42px; color:var(--cgi-red); }}
-              .login h1 {{ margin:12px 0 8px; font-size:28px; }}
-              .login p {{ color:var(--muted); line-height:1.55; }}
-              .login input {{ width:100%; padding:16px 18px; border:2px solid var(--line); border-radius:14px; font-size:18px; margin:12px 0; }}
-              .login button, .source-button, .filter.active {{ background:var(--cgi-red); color:#fff; }}
-              .login button {{ width:100%; border:0; padding:15px 18px; border-radius:999px; font-weight:800; font-size:16px; cursor:pointer; }}
-              .error {{ color:var(--cgi-red); font-weight:700; display:none; }}
-              .page {{ display:none; }}
-              header {{ background:linear-gradient(135deg,var(--cgi-red),#a82465,var(--cgi-purple)); color:#fff; padding:42px 24px 52px; }}
-              .wrap {{ max-width:1180px; margin:0 auto; }}
-              .topline {{ display:flex; justify-content:space-between; gap:24px; align-items:flex-start; flex-wrap:wrap; }}
-              .brand {{ font-weight:900; font-size:46px; letter-spacing:-2px; }}
-              .badge {{ display:inline-flex; padding:9px 13px; border:1px solid rgba(255,255,255,.35); border-radius:999px; font-size:13px; background:rgba(255,255,255,.12); }}
-              h1 {{ font-size:clamp(34px,6vw,68px); line-height:.95; letter-spacing:-3px; max-width:900px; margin:34px 0 18px; }}
-              .sub {{ max-width:860px; color:rgba(255,255,255,.9); font-size:18px; line-height:1.55; }}
-              .stats {{ margin-top:24px; display:flex; gap:12px; flex-wrap:wrap; }}
-              .stat {{ background:#fff; color:#000; border-radius:18px; padding:16px 20px; min-width:170px; }}
-              .stat strong {{ display:block; font-size:28px; }}
-              main {{ padding:34px 24px 70px; }}
-              .section {{ margin:0 auto 34px; max-width:1180px; }}
-              .panel {{ background:#fff; border:1px solid var(--line); border-radius:26px; padding:26px; box-shadow:0 10px 30px rgba(36,20,50,.06); }}
-              .panel h2, .section h2 {{ margin:0 0 12px; font-size:30px; letter-spacing:-1px; }}
-              .panel p {{ margin:0 0 10px; color:var(--muted); line-height:1.65; font-size:17px; }}
-              .warning {{ border-color:#e31937; }}
-              .filters {{ display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }}
-              .filter {{ border:1px solid var(--line); background:#fff; color:#111; border-radius:999px; padding:10px 14px; cursor:pointer; font-weight:700; }}
-              .filter span {{ opacity:.65; margin-left:4px; }}
-              .grid {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }}
-              .card {{ background:#fff; border:1px solid var(--line); border-radius:24px; overflow:hidden; box-shadow:0 12px 28px rgba(36,20,50,.07); display:flex; flex-direction:column; min-width:0; }}
-              .visual {{ position:relative; width:100%; aspect-ratio:16/9; background:#e9e6ee; overflow:hidden; }}
+              body {{ margin:0; font-family: Inter, Arial, Helvetica, sans-serif; background:var(--soft); color:var(--text); }}
+              .login {{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg, var(--cgi-red), #a82465, var(--cgi-purple)); z-index:20; padding:24px; }}
+              .login-card {{ width:min(440px, 100%); background:#fff; border-radius:28px; padding:32px; box-shadow:0 28px 70px rgba(0,0,0,.28); }}
+              .login-card h1 {{ margin:0 0 8px; font-size:28px; }}
+              .login-card p {{ color:var(--muted); line-height:1.5; }}
+              .login-card input {{ width:100%; padding:15px 16px; border-radius:14px; border:1px solid var(--line); font-size:17px; margin:12px 0; }}
+              .login-card button {{ width:100%; background:var(--cgi-red); color:white; border:0; padding:15px 18px; border-radius:14px; font-weight:800; cursor:pointer; }}
+              .login-error {{ color:var(--cgi-red); min-height:22px; font-weight:700; }}
+              .app {{ display:none; }}
+              header {{ background:linear-gradient(135deg, var(--cgi-red), #a82465, var(--cgi-purple)); color:#fff; padding:42px clamp(20px,4vw,56px); }}
+              .topbar {{ display:flex; justify-content:space-between; gap:20px; align-items:center; flex-wrap:wrap; }}
+              .brand {{ font-size:26px; font-weight:900; letter-spacing:.02em; }}
+              .badge {{ border:1px solid rgba(255,255,255,.5); border-radius:999px; padding:7px 12px; font-size:12px; opacity:.95; }}
+              h1 {{ margin:28px 0 12px; font-size:clamp(34px,6vw,72px); line-height:.95; max-width:1000px; }}
+              .subtitle {{ font-size:clamp(17px,2vw,22px); max-width:940px; line-height:1.45; opacity:.94; }}
+              .hero-stat {{ margin-top:24px; display:inline-flex; gap:10px; align-items:center; background:#fff; color:#000; border-radius:999px; padding:11px 18px; font-weight:900; }}
+              main {{ width:min(1220px, calc(100% - 32px)); margin:0 auto; }}
+              .panel {{ background:#fff; border:1px solid var(--line); border-radius:26px; padding:clamp(20px,3vw,34px); margin:26px 0; box-shadow:0 12px 30px rgba(30,20,50,.06); }}
+              h2 {{ margin:0 0 14px; font-size:clamp(24px,3vw,34px); }}
+              .week-summary {{ font-size:18px; line-height:1.7; color:#29242f; }}
+              .filters {{ display:flex; flex-wrap:wrap; gap:10px; }}
+              .filter, .tag {{ border:1px solid var(--line); background:#fff; color:#251f2c; border-radius:999px; padding:9px 12px; cursor:pointer; font-weight:700; }}
+              .filter span {{ margin-left:7px; opacity:.6; }}
+              .filter.active, .tag:hover {{ background:var(--cgi-purple); color:#fff; border-color:var(--cgi-purple); }}
+              .grid {{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:22px; margin:26px 0 50px; }}
+              .card {{ background:#fff; border:1px solid var(--line); border-radius:28px; overflow:hidden; box-shadow:0 18px 38px rgba(32,23,46,.08); display:flex; flex-direction:column; min-height:100%; }}
+              .visual {{ position:relative; aspect-ratio:16/9; background:#ddd; overflow:hidden; }}
               .visual img {{ width:100%; height:100%; object-fit:cover; display:block; }}
-              .image-badge {{ position:absolute; left:12px; bottom:12px; background:rgba(0,0,0,.72); color:#fff; border-radius:999px; padding:7px 10px; font-size:12px; font-weight:800; }}
-              .card-body {{ padding:18px; display:flex; flex-direction:column; gap:12px; flex:1; }}
-              .meta {{ display:flex; justify-content:space-between; gap:12px; color:var(--muted); font-size:12px; text-transform:uppercase; font-weight:800; letter-spacing:.04em; }}
-              h3 {{ margin:0; font-size:20px; line-height:1.18; letter-spacing:-.3px; }}
-              .summary {{ margin:0; color:#3d3745; line-height:1.5; }}
-              .angle {{ background:#f8f5fa; border-left:4px solid var(--cgi-purple); border-radius:14px; padding:12px; line-height:1.45; color:#2d2638; }}
-              .tags {{ display:flex; gap:8px; flex-wrap:wrap; margin-top:auto; }}
-              .tag {{ border:1px solid #e4dcea; background:#fff; color:#5236ab; padding:7px 9px; border-radius:999px; font-size:12px; font-weight:800; cursor:pointer; }}
-              .source-button {{ display:inline-flex; justify-content:center; align-items:center; text-decoration:none; border-radius:999px; padding:12px 16px; font-weight:900; margin-top:2px; box-shadow:0 8px 18px rgba(227,25,55,.18); }}
-              .source-button:hover {{ transform:translateY(-1px); }}
-              .empty {{ display:none; padding:30px; text-align:center; color:var(--muted); }}
-              details {{ max-width:1180px; margin:0 auto 34px; }}
-              summary {{ cursor:pointer; font-weight:800; }}
-              pre {{ white-space:pre-wrap; background:#111; color:#fff; padding:18px; border-radius:18px; overflow:auto; max-height:420px; }}
-              footer {{ border-top:1px solid var(--line); padding:28px 24px; color:var(--muted); font-size:14px; }}
-              @media (max-width:950px) {{ .grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} }}
-              @media (max-width:640px) {{ header {{ padding:28px 18px 36px; }} main {{ padding:24px 14px 50px; }} .grid {{ grid-template-columns:1fr; }} .panel {{ padding:20px; }} .brand {{ font-size:36px; }} .meta {{ flex-direction:column; gap:4px; }} }}
+              .image-label {{ position:absolute; left:12px; bottom:12px; background:rgba(0,0,0,.72); color:#fff; font-size:11px; border-radius:999px; padding:6px 9px; }}
+              .card-body {{ padding:20px; display:flex; flex-direction:column; gap:12px; flex:1; }}
+              .meta {{ display:flex; justify-content:space-between; gap:10px; color:var(--muted); font-size:13px; font-weight:800; }}
+              .card h3 {{ margin:0; font-size:21px; line-height:1.22; }}
+              .summary {{ margin:0; color:#3e3945; line-height:1.55; }}
+              .cgi {{ background:#fbf7f8; border-left:4px solid var(--cgi-red); padding:13px 14px; border-radius:13px; line-height:1.45; }}
+              .tags {{ display:flex; flex-wrap:wrap; gap:8px; }}
+              .tag {{ font-size:12px; padding:7px 10px; }}
+              .source-button {{ margin-top:auto; display:inline-flex; justify-content:center; align-items:center; text-decoration:none; background:var(--cgi-red); color:#fff; border-radius:14px; padding:13px 16px; font-weight:900; }}
+              .source-button:hover {{ filter:brightness(.94); }}
+              .hidden {{ display:none !important; }}
+              footer {{ color:var(--muted); padding:30px 0 50px; font-size:13px; }}
+              @media (max-width:980px) {{ .grid {{ grid-template-columns:repeat(2, minmax(0,1fr)); }} }}
+              @media (max-width:650px) {{ .grid {{ grid-template-columns:1fr; }} header {{ padding:30px 18px; }} .panel {{ border-radius:20px; }} }}
             </style>
           </head>
-          <body class="locked">
-            <div class="login" id="login">
+          <body>
+            <section id="login" class="login">
               <div class="login-card">
-                <div class="logo">CGI</div>
+                <div class="brand" style="color:var(--cgi-red)">CGI</div>
                 <h1>AI & Retail Weekstream</h1>
                 <p>Voer de toegangscode in om de briefing te openen.</p>
-                <input id="code" type="password" placeholder="Toegangscode" autocomplete="current-password">
-                <button id="unlock">Open briefing</button>
-                <p class="error" id="error">Onjuiste toegangscode.</p>
+                <input id="code" type="password" placeholder="Toegangscode" autocomplete="off">
+                <button id="loginBtn">Open briefing</button>
+                <div id="loginError" class="login-error"></div>
+                <p style="font-size:12px">Let op: dit is een lichte toegangsdrempel voor een statische GitHub Pages-site, geen enterprise-login.</p>
               </div>
-            </div>
-            <div class="page" id="page">
+            </section>
+            <div id="app" class="app">
               <header>
-                <div class="wrap">
-                  <div class="topline"><div class="brand">CGI</div><div class="badge">{VERSION}</div></div>
-                  <h1>AI & Retail Weekstream</h1>
-                  <p class="sub">Wekelijkse selectie van internationale AI-ontwikkelingen en Retail & Consumer Services-signalen. {h(page_note)}</p>
-                  <div class="stats"><div class="stat"><strong>{len(accepted)}</strong> relevante artikelen</div></div>
-                </div>
+                <div class="topbar"><div class="brand">CGI</div><div class="badge">{VERSION}</div></div>
+                <h1>AI & Retail Weekstream</h1>
+                <p class="subtitle">Wekelijkse selectie van internationale AI-ontwikkelingen met specifieke relevantie voor Retail & Consumer Services.</p>
+                <div class="hero-stat">{len(articles)} relevante artikelen</div>
               </header>
               <main>
-                <section class="section panel">
+                <section class="panel">
                   <h2>Weeksamenvatting</h2>
-                  <p>{h(week_summary)}</p>
+                  <div class="week-summary">{week_summary}</div>
                 </section>
-                <section class="section panel">
+                <section class="panel">
                   <h2>Filter op topic</h2>
-                  <div class="filters">{filters_html}</div>
+                  <div class="filters">{filter_buttons}</div>
                 </section>
-                {cards_section}
-                <details><summary>Technische beeldstatus</summary><pre>{status_json_escaped}</pre></details>
+                <section class="grid" id="cards">{''.join(cards)}</section>
+                <section class="panel">
+                  <h2>Retail & Consumer Services: relevante artikelen</h2>
+                  <p>Gebruik de filter <strong>Retail & Consumer Services</strong> om direct de artikelen te tonen die het meest relevant zijn voor retailklanten, consumer-services-klanten, omnichannel operatie, klantdata, commerce en AI-adoptie.</p>
+                </section>
+                <footer>
+                  Gegenereerd op {generated.strftime('%d-%m-%Y %H:%M UTC')}. Alle zichtbare artikelbeelden zijn embedded bronafbeeldingen uit RSS, Open Graph, Twitter image metadata, JSON-LD of het originele artikel. Fallback visuals: 0.
+                </footer>
               </main>
-              <footer><div class="wrap">Gegenereerd op {h(generated)} Europe/Amsterdam · Bronafbeeldingen zijn embedded in deze HTML, dus er zijn geen losse afbeeldingbestanden of relatieve paden.</div></footer>
             </div>
             <script>
               const ACCESS_CODE = {json.dumps(ACCESS_CODE)};
               const login = document.getElementById('login');
-              const page = document.getElementById('page');
-              const code = document.getElementById('code');
-              const err = document.getElementById('error');
-              function showPage() {{ login.style.display='none'; page.style.display='block'; document.body.classList.remove('locked'); }}
-              if (localStorage.getItem('cgi_weekstream_access') === 'ok') showPage();
-              document.getElementById('unlock').addEventListener('click', () => {{ if (code.value === ACCESS_CODE) {{ localStorage.setItem('cgi_weekstream_access','ok'); showPage(); }} else {{ err.style.display='block'; }} }});
-              code.addEventListener('keydown', e => {{ if (e.key === 'Enter') document.getElementById('unlock').click(); }});
+              const app = document.getElementById('app');
+              function showApp() {{ login.style.display='none'; app.style.display='block'; }}
+              if (localStorage.getItem('cgi_weekstream_access') === ACCESS_CODE) showApp();
+              document.getElementById('loginBtn').addEventListener('click', () => {{
+                const value = document.getElementById('code').value;
+                if (value === ACCESS_CODE) {{ localStorage.setItem('cgi_weekstream_access', value); showApp(); }}
+                else {{ document.getElementById('loginError').textContent = 'Onjuiste toegangscode.'; }}
+              }});
+              document.getElementById('code').addEventListener('keydown', (e) => {{ if (e.key === 'Enter') document.getElementById('loginBtn').click(); }});
               function applyFilter(topic) {{
                 document.querySelectorAll('.filter').forEach(b => b.classList.toggle('active', b.dataset.filter === topic));
-                let shown = 0;
-                document.querySelectorAll('#articleGrid .card').forEach(card => {{
-                  const topics = (card.dataset.topics || '').split(' ');
-                  const visible = topic === 'all' || topics.includes(topic);
-                  card.style.display = visible ? '' : 'none';
-                  if (visible) shown++;
+                document.querySelectorAll('.card').forEach(card => {{
+                  const match = topic === 'Alle artikelen' || card.dataset.topics.split('|').includes(topic);
+                  card.classList.toggle('hidden', !match);
                 }});
-                const empty = document.getElementById('empty');
-                if (empty) empty.style.display = shown ? 'none' : 'block';
               }}
-              document.querySelectorAll('.filter,.tag').forEach(btn => btn.addEventListener('click', () => applyFilter(btn.dataset.filter || 'all')));
+              document.querySelectorAll('.filter, .tag').forEach(btn => btn.addEventListener('click', () => applyFilter(btn.dataset.filter)));
             </script>
           </body>
           </html>'''
+              status = {
+                  "version": VERSION,
+                  "generated_at_utc": generated.isoformat(),
+                  "lookback_hours": LOOKBACK_HOURS,
+                  "article_count": len(articles),
+                  "retail_article_count": retail_count,
+                  "strict_source_images": True,
+                  "source_images_embedded": len(articles),
+                  "fallback_visuals": 0,
+                  "no_external_image_paths": True,
+                  "image_pipeline": "rss_or_article_metadata_source_image_downloaded_and_embedded_as_data_uri",
+                  "topics": topic_counts,
+                  "sources": statuses,
+                  "published_images_sample": [
+                      {"source": a["source"], "title": a["title"], "article_url": a["url"], "image_method": a["image"].get("method"), "source_image_url": a["image"].get("source_image_url"), "mime": a["image"].get("mime"), "bytes": a["image"].get("bytes")}
+                      for a in articles[:12]
+                  ],
+                  "rejected_without_source_image_count": len(rejected),
+                  "rejected_without_source_image_sample": rejected[:12],
+              }
+              return html_doc, status
 
-          def write_dest(dest):
-              ensure_dir(dest)
-              with open(os.path.join(dest, "index.html"), "w", encoding="utf-8") as f:
-                  f.write(html_doc)
-              with open(os.path.join(dest, "status.json"), "w", encoding="utf-8") as f:
-                  json.dump(status, f, ensure_ascii=False, indent=2, default=str)
-              with open(os.path.join(dest, "DEPLOYMENT_CHECK.txt"), "w", encoding="utf-8") as f:
-                  f.write(f"{VERSION}\nPublished articles: {len(accepted)}\nSource images embedded: {len(accepted)}\nFallback visuals: 0\nNo external image paths: true\n")
+          def build_week_summary(articles, retail_count):
+              if not articles:
+                  return "Er zijn binnen de ingestelde bronnen geen relevante artikelen met bruikbare bronafbeelding gevonden. Controleer status.json voor de reden."
+              top_sources = {}
+              for a in articles:
+                  top_sources[a["source"]] = top_sources.get(a["source"], 0) + 1
+              source_names = ", ".join(list(top_sources.keys())[:5])
+              return (
+                  f"Afgelopen week zijn {len(articles)} relevante AI-artikelen opgenomen, waarvan {retail_count} met een duidelijke link naar Retail & Consumer Services. "
+                  f"De selectie bevat signalen uit onder meer {html_escape(source_names)}. De nadruk ligt op AI-adoptie, agents, foundation models, data- en platformontwikkelingen, governance en toepassingen voor retail- en consumer-services organisaties."
+              )
 
-          write_dest("site")
-          write_dest("site/latest")
-          archive_dir = os.path.join("site", "archive", NOW.strftime("%G-W%V"))
-          write_dest(archive_dir)
-          log(f"DONE: published={len(accepted)} embedded_source_images={len(accepted)} rejected_without_image={len(rejected)}")
+          def write_site(html_doc, status):
+              os.makedirs("site/latest", exist_ok=True)
+              for path in ["site/index.html", "site/latest/index.html"]:
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(html_doc)
+              for path in ["site/status.json", "site/latest/status.json"]:
+                  with open(path, "w", encoding="utf-8") as f:
+                      json.dump(status, f, ensure_ascii=False, indent=2)
+              with open("site/DEPLOYMENT_CHECK.txt", "w", encoding="utf-8") as f:
+                  f.write(f"{VERSION}\nRoot and /latest were generated by the same workflow.\n")
+              with open("site/.nojekyll", "w", encoding="utf-8") as f:
+                  f.write("")
+
+          articles, rejected, statuses = build_articles()
+          html_doc, status = build_html(articles, rejected, statuses)
+          write_site(html_doc, status)
+          print(json.dumps({"version": VERSION, "article_count": len(articles), "source_images_embedded": len(articles), "fallback_visuals": 0, "rejected": len(rejected)}, indent=2))
           PY
 
       - name: Configure GitHub Pages
