@@ -1,4 +1,4 @@
-name: CGI AI Retail & Consumer Services Weekstream - IDEAL
+name: CGI AI & IT Retail & Consumer Services Weekstream - v15
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check --quiet pillow
 
-      - name: Generate CGI AI Retail & Consumer Services weekstream
+      - name: Generate CGI AI & IT Retail & Consumer Services weekstream
         run: |
           python3 - <<'PY'
           import base64
@@ -52,14 +52,14 @@ jobs:
           from datetime import datetime, timedelta, timezone
           from pathlib import Path
 
-          from PIL import Image, ImageOps, UnidentifiedImageError
+          from PIL import Image, ImageOps, ImageDraw, ImageFont, UnidentifiedImageError
 
-          VERSION = "v13.0-ideal-cgi-rcs-source-images"
+          VERSION = "v15.0-cgi-rcs-ai-it-images-first-fallback"
           ACCESS_CODE = "NT2026!"
           LOOKBACK_HOURS = 168
-          MAX_PUBLISHED_ARTICLES = 36
+          MAX_PUBLISHED_ARTICLES = 54
           MAX_FEED_ITEMS_PER_SOURCE = 50
-          MIN_RELEVANCE_SCORE = 7.0
+          MIN_RELEVANCE_SCORE = 6.5
           HTTP_TIMEOUT = 16
           MAX_HTML_BYTES = 2_500_000
           MAX_IMAGE_BYTES = 7_000_000
@@ -70,7 +70,7 @@ jobs:
           USER_AGENT = (
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
               "AppleWebKit/537.36 (KHTML, like Gecko) "
-              "Chrome/126.0 Safari/537.36 CGI-RCS-AI-Weekstream/13.0"
+              "Chrome/126.0 Safari/537.36 CGI-RCS-AI-IT-Weekstream/15.0"
           )
 
           # Redactionele scope:
@@ -79,108 +79,52 @@ jobs:
           # ze relevant zijn voor enterprise IT, data/platform, governance, agents/automation,
           # klantinteractie, commerce, store operations, supply chain of vendor roadmaps.
           SOURCES = [
-              {
-                  "name": "TechCrunch AI",
-                  "kind": "AI news",
-                  "feeds": ["https://techcrunch.com/category/artificial-intelligence/feed/"],
-                  "boost": 1.0,
-              },
-              {
-                  "name": "The Verge AI",
-                  "kind": "AI news",
-                  "feeds": ["https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"],
-                  "boost": 0.8,
-              },
-              {
-                  "name": "WIRED AI",
-                  "kind": "AI news",
-                  "feeds": ["https://www.wired.com/feed/tag/artificial-intelligence/latest/rss"],
-                  "boost": 0.8,
-              },
-              {
-                  "name": "OpenAI News",
-                  "kind": "AI lab",
-                  "feeds": ["https://openai.com/news/rss.xml"],
-                  "boost": 1.6,
-              },
-              {
-                  "name": "Google DeepMind Blog",
-                  "kind": "AI lab",
-                  "feeds": ["https://deepmind.google/blog/rss.xml"],
-                  "boost": 1.5,
-              },
-              {
-                  "name": "Anthropic News",
-                  "kind": "AI lab",
-                  "feeds": ["https://www.anthropic.com/news/rss.xml", "https://www.anthropic.com/rss.xml"],
-                  "boost": 1.5,
-              },
-              {
-                  "name": "VentureBeat AI",
-                  "kind": "Enterprise AI",
-                  "feeds": ["https://venturebeat.com/category/ai/feed/"],
-                  "boost": 1.4,
-              },
-              {
-                  "name": "The Decoder",
-                  "kind": "AI news",
-                  "feeds": ["https://the-decoder.com/feed/"],
-                  "boost": 1.0,
-              },
-              {
-                  "name": "NVIDIA AI Blog",
-                  "kind": "Enterprise AI",
-                  "feeds": ["https://blogs.nvidia.com/blog/category/deep-learning/feed/", "https://blogs.nvidia.com/feed/"],
-                  "boost": 1.3,
-              },
-              {
-                  "name": "AWS Machine Learning Blog",
-                  "kind": "Enterprise AI",
-                  "feeds": ["https://aws.amazon.com/blogs/machine-learning/feed/"],
-                  "boost": 1.4,
-              },
-              {
-                  "name": "Google Cloud AI",
-                  "kind": "Enterprise AI",
-                  "feeds": ["https://cloud.google.com/blog/products/ai-machine-learning/rss/"],
-                  "boost": 1.4,
-              },
-              {
-                  "name": "Retail Dive",
-                  "kind": "Retail & Consumer Services",
-                  "feeds": ["https://www.retaildive.com/feeds/news/"],
-                  "boost": 1.6,
-              },
-              {
-                  "name": "Modern Retail",
-                  "kind": "Retail & Consumer Services",
-                  "feeds": ["https://www.modernretail.co/feed/"],
-                  "boost": 1.5,
-              },
-              {
-                  "name": "RetailWire",
-                  "kind": "Retail & Consumer Services",
-                  "feeds": ["https://retailwire.com/feed/"],
-                  "boost": 1.4,
-              },
-              {
-                  "name": "Grocery Dive",
-                  "kind": "Retail & Consumer Services",
-                  "feeds": ["https://www.grocerydive.com/feeds/news/"],
-                  "boost": 1.4,
-              },
-              {
-                  "name": "Digital Commerce 360",
-                  "kind": "Retail & Consumer Services",
-                  "feeds": ["https://www.digitalcommerce360.com/feed/"],
-                  "boost": 1.4,
-              },
-              {
-                  "name": "NRF",
-                  "kind": "Retail & Consumer Services",
-                  "feeds": ["https://nrf.com/rss.xml"],
-                  "boost": 1.2,
-              },
+              # 1) Core AI-signalen: modelontwikkeling, agents, governance, multimodaliteit.
+              {"name": "OpenAI News", "kind": "AI lab", "feeds": ["https://openai.com/news/rss.xml"], "boost": 1.7},
+              {"name": "Google DeepMind Blog", "kind": "AI lab", "feeds": ["https://deepmind.google/blog/rss.xml"], "boost": 1.6},
+              {"name": "Anthropic News", "kind": "AI lab", "feeds": ["https://www.anthropic.com/news/rss.xml", "https://www.anthropic.com/rss.xml"], "boost": 1.5},
+              {"name": "TechCrunch AI", "kind": "AI news", "feeds": ["https://techcrunch.com/category/artificial-intelligence/feed/"], "boost": 1.0},
+              {"name": "VentureBeat AI", "kind": "Enterprise AI", "feeds": ["https://venturebeat.com/category/ai/feed/"], "boost": 1.4},
+              {"name": "The Decoder", "kind": "AI news", "feeds": ["https://the-decoder.com/feed/"], "boost": 1.1},
+              {"name": "WIRED AI", "kind": "AI news", "feeds": ["https://www.wired.com/feed/tag/artificial-intelligence/latest/rss"], "boost": 0.8},
+              {"name": "The Verge AI", "kind": "AI news", "feeds": ["https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"], "boost": 0.8},
+
+              # 2) Enterprise IT/AI-toepassing: relevant voor CGI delivery, architecture, cloud, data, security.
+              {"name": "NVIDIA AI Blog", "kind": "Enterprise AI", "feeds": ["https://blogs.nvidia.com/blog/category/deep-learning/feed/", "https://blogs.nvidia.com/feed/"], "boost": 1.4},
+              {"name": "AWS Machine Learning Blog", "kind": "Enterprise AI", "feeds": ["https://aws.amazon.com/blogs/machine-learning/feed/"], "boost": 1.4},
+              {"name": "Google Cloud AI", "kind": "Enterprise AI", "feeds": ["https://cloud.google.com/blog/products/ai-machine-learning/rss/"], "boost": 1.4},
+              {"name": "Microsoft Azure Blog", "kind": "Enterprise IT", "feeds": ["https://azure.microsoft.com/en-us/blog/feed/"], "boost": 1.2},
+              {"name": "Microsoft AI Blog", "kind": "Enterprise AI", "feeds": ["https://blogs.microsoft.com/ai/feed/", "https://blogs.microsoft.com/blog/category/ai/feed/"], "boost": 1.3},
+              {"name": "Salesforce News", "kind": "Enterprise IT", "feeds": ["https://www.salesforce.com/news/feed/"], "boost": 1.25},
+              {"name": "SAP News", "kind": "Enterprise IT", "feeds": ["https://news.sap.com/feed/"], "boost": 1.25},
+              {"name": "Adobe Business Blog", "kind": "Enterprise IT", "feeds": ["https://business.adobe.com/blog/feed.xml", "https://blog.adobe.com/en/feed"], "boost": 1.15},
+              {"name": "ServiceNow Blog", "kind": "Enterprise IT", "feeds": ["https://www.servicenow.com/blogs/feed", "https://www.servicenow.com/blogs.atom"], "boost": 1.15},
+
+              # 3) Retailtech en commerce: directe signalen voor winkeloperatie, omnichannel, retail media, commerce platforms.
+              {"name": "Retail Technology Innovation Hub", "kind": "Retail Tech", "feeds": ["https://retailtechinnovationhub.com/?format=rss"], "boost": 2.0},
+              {"name": "Retail TouchPoints", "kind": "Retail Tech", "feeds": ["https://www.retailtouchpoints.com/feed", "https://www.retailtouchpoints.com/feed/"], "boost": 1.9},
+              {"name": "Retail Customer Experience", "kind": "Retail Tech", "feeds": ["https://www.retailcustomerexperience.com/rss/", "https://www.retailcustomerexperience.com/feed/"], "boost": 1.7},
+              {"name": "Chain Store Age", "kind": "Retail Tech", "feeds": ["https://www.chainstoreage.com/rss.xml", "https://www.chainstoreage.com/rss"], "boost": 1.6},
+              {"name": "Retail Dive", "kind": "Retail & Consumer Services", "feeds": ["https://www.retaildive.com/feeds/news/"], "boost": 1.6},
+              {"name": "Modern Retail", "kind": "Retail & Consumer Services", "feeds": ["https://www.modernretail.co/feed/"], "boost": 1.5},
+              {"name": "RetailWire", "kind": "Retail & Consumer Services", "feeds": ["https://retailwire.com/feed/"], "boost": 1.4},
+              {"name": "Grocery Dive", "kind": "Retail & Consumer Services", "feeds": ["https://www.grocerydive.com/feeds/news/"], "boost": 1.4},
+              {"name": "Digital Commerce 360", "kind": "Commerce Platform", "feeds": ["https://www.digitalcommerce360.com/feed/"], "boost": 1.4},
+              {"name": "NRF", "kind": "Retail & Consumer Services", "feeds": ["https://nrf.com/rss.xml"], "boost": 1.2},
+              {"name": "InternetRetailing", "kind": "Retail Tech", "feeds": ["https://internetretailing.net/feed/"], "boost": 1.4},
+              {"name": "PYMNTS Retail", "kind": "Retail Tech", "feeds": ["https://www.pymnts.com/category/news/retail/feed/", "https://www.pymnts.com/feed/"], "boost": 1.2},
+
+              # 4) Nederlandse/EU-signalen: IT, digitale commerce, AI-adoptie, security en retail in de lokale markt.
+              {"name": "Emerce", "kind": "Dutch market", "feeds": ["https://www.emerce.nl/feed"], "boost": 1.8},
+              {"name": "Twinkle", "kind": "Dutch market", "feeds": ["https://twinklemagazine.nl/feed", "https://twinklemagazine.nl/rss.xml"], "boost": 1.7},
+              {"name": "RetailTrends", "kind": "Dutch market", "feeds": ["https://retailtrends.nl/feed", "https://retailtrends.nl/rss"], "boost": 1.6},
+              {"name": "Distrifood", "kind": "Dutch market", "feeds": ["https://www.distrifood.nl/feed", "https://www.distrifood.nl/rss"], "boost": 1.4},
+              {"name": "AG Connect", "kind": "Enterprise IT", "feeds": ["https://www.agconnect.nl/rss", "https://www.agconnect.nl/feed"], "boost": 1.5},
+              {"name": "Computable", "kind": "Enterprise IT", "feeds": ["https://www.computable.nl/feed", "https://www.computable.nl/rss"], "boost": 1.5},
+              {"name": "Frankwatching", "kind": "Dutch market", "feeds": ["https://www.frankwatching.com/feed/"], "boost": 1.2},
+              {"name": "Marketingfacts", "kind": "Dutch market", "feeds": ["https://www.marketingfacts.nl/feed/", "https://www.marketingfacts.nl/rss/"], "boost": 1.2},
+              {"name": "CustomerFirst", "kind": "Dutch market", "feeds": ["https://www.customerfirst.nl/feed", "https://www.customerfirst.nl/rss"], "boost": 1.4},
+              {"name": "Dutch IT Channel", "kind": "Enterprise IT", "feeds": ["https://www.dutchitchannel.nl/rss.xml", "https://dutchitchannel.nl/rss.xml"], "boost": 1.25},
           ]
 
           AI_TERMS = {
@@ -188,7 +132,8 @@ jobs:
               "foundation model", "model", "multimodal", "agent", "agents", "ai agent", "agentic",
               "automation", "copilot", "chatbot", "computer vision", "machine learning", "deep learning",
               "reasoning", "robotics", "synthetic data", "inference", "training", "open source model",
-              "voice ai", "search ai", "recommendation", "personalization", "personalisation",
+              "voice ai", "search ai", "recommendation", "personalization", "personalisation", "personalisatie",
+              "agentic commerce", "ai shopping", "ai search", "ai assistant", "vision ai", "rag", "predictive analytics",
           }
           RCS_TERMS = {
               "retail", "retailer", "commerce", "ecommerce", "e-commerce", "consumer", "consumer services",
@@ -197,6 +142,8 @@ jobs:
               "checkout", "pos", "inventory", "supply chain", "fulfillment", "fulfilment", "last mile",
               "returns", "warehouse", "forecast", "demand planning", "assortment", "product data",
               "customer service", "contact center", "personalization", "loyalty program",
+              "brand", "brands", "cpg", "consumer goods", "qsr", "restaurant", "hospitality", "fashion",
+              "foodservice", "supermarket", "grocery", "pharmacy", "home services", "experience economy", "customer journey", "klantcontact", "klantbeleving", "loyaliteit", "webshop", "webwinkel", "online retail", "betaaloplossing", "payments", "fraud", "fraude",
           }
           ENTERPRISE_TERMS = {
               "enterprise", "business", "platform", "cloud", "data", "architecture", "integration",
@@ -204,6 +151,8 @@ jobs:
               "workflow", "productivity", "operations", "implementation", "adoption", "deployment",
               "cost", "performance", "infrastructure", "cybersecurity", "identity", "database",
               "erp", "crm", "sap", "salesforce", "adobe", "azure", "aws", "google cloud", "service now",
+              "composable commerce", "headless", "omnichannel platform", "pim", "dam", "cdp",
+              "data platform", "loyalty platform", "order management", "oms", "pos", "edge", "digital product passport", "payments", "fraud", "identity", "nis2", "ai act", "martech", "order management", "digital transformation", "modern workplace",
           }
           VENDOR_TERMS = {
               "openai", "chatgpt", "gpt", "claude", "anthropic", "gemini", "deepmind", "microsoft",
@@ -219,12 +168,16 @@ jobs:
               ("Retail & Consumer Services", RCS_TERMS),
               ("AI Agents & Automation", {"agent", "agents", "agentic", "automation", "workflow", "autonomous", "copilot", "assistant"}),
               ("GenAI & Foundation Models", {"generative ai", "genai", "llm", "foundation model", "model", "multimodal", "gpt", "claude", "gemini", "llama", "reasoning"}),
-              ("Customer & Loyalty", {"customer", "loyalty", "personalization", "personalisation", "service", "contact center", "recommendation", "experience", "shopper"}),
+              ("Customer, Loyalty & CX", {"customer", "loyalty", "personalization", "personalisation", "personalisatie", "service", "contact center", "klantcontact", "recommendation", "experience", "cx", "shopper", "klantbeleving"}),
               ("Store Operations", {"store", "checkout", "pos", "associate", "robotics", "computer vision", "loss prevention", "queue", "operations"}),
               ("Supply Chain & Forecasting", {"inventory", "supply chain", "forecast", "demand planning", "warehouse", "fulfillment", "fulfilment", "last mile"}),
-              ("Pricing & Merchandising", {"pricing", "promotion", "merchandising", "assortment", "retail media", "marketplace", "product data"}),
-              ("Data, Platforms & Cloud", {"data", "platform", "cloud", "architecture", "api", "integration", "database", "infrastructure", "azure", "aws", "google cloud"}),
-              ("Governance, Risk & Responsible AI", {"governance", "responsible ai", "safety", "privacy", "security", "compliance", "risk", "regulation", "trust", "cybersecurity"}),
+              ("Pricing, Merchandising & Retail Media", {"pricing", "prijsstelling", "promotion", "merchandising", "assortment", "retail media", "retailmedia", "marketplace", "product data"}),
+              ("Commerce Platforms & Martech", {"commerce platform", "ecommerce", "e-commerce", "webshop", "webwinkel", "shopify", "commercetools", "salesforce commerce", "adobe commerce", "martech", "crm", "cdp", "pim", "oms", "loyalty platform"}),
+              ("Payments, Fraud & Security", {"payment", "payments", "betaling", "adyen", "stripe", "fraud", "fraude", "identity", "security", "cybersecurity", "checkout"}),
+              ("Data, Platforms & Cloud", {"data", "platform", "cloud", "database", "infrastructure", "azure", "aws", "google cloud", "cdp", "pim", "dam"}),
+              ("Enterprise Architecture & Integration", {"architecture", "api", "integration", "erp", "crm", "sap", "salesforce", "adobe", "oracle", "oms", "pos", "headless", "composable commerce", "service now"}),
+              ("Governance, Risk & Responsible AI", {"governance", "responsible ai", "safety", "privacy", "security", "compliance", "risk", "regulation", "trust", "cybersecurity", "nis2", "ai act"}),
+              ("Nederland & Europese markt", {"nederland", "dutch", "netherlands", "eu", "europe", "european", "benelux", "amsterdam", "rotterdam", "utrecht", "acm", "dpg", "ah", "albert heijn", "bol", "jumbo", "picnic", "coolblue", "action", "hema", "wehkamp"}),
               ("Research & Market Signals", {"research", "benchmark", "study", "report", "survey", "market", "trend", "index", "paper", "launch"}),
           ]
 
@@ -426,9 +379,9 @@ jobs:
               score += min(enterprise_score, 5) * 1.5
               score += min(vendor_score, 4) * 0.8
               score += item.get("source_boost", 1.0)
-              if source_kind == "Retail & Consumer Services":
+              if source_kind in {"Retail & Consumer Services", "Retail Tech", "Commerce Platform", "Dutch market"}:
                   score += 2.2
-              if source_kind in {"Enterprise AI", "AI lab"}:
+              if source_kind in {"Enterprise AI", "Enterprise IT", "AI lab"}:
                   score += 1.4
               if ai_score > 0 and rcs_score > 0:
                   score += 3.0
@@ -441,9 +394,11 @@ jobs:
 
               # Hard editorial gates: no pure retail news without AI/IT angle; no broad AI without enterprise/RCS angle.
               eligible = False
-              if source_kind == "Retail & Consumer Services":
-                  eligible = (ai_score >= 1 or enterprise_score >= 2 or vendor_score >= 1) and rcs_score >= 1
-              elif source_kind in {"AI lab", "Enterprise AI"}:
+              if source_kind in {"Retail & Consumer Services", "Retail Tech", "Commerce Platform", "Dutch market"}:
+                  # Retail/commerce/NL-bronnen mogen ook niet-AI IT-transformatie signalen meenemen,
+                  # zolang er duidelijke IT-, data-, platform-, security- of operational excellence waarde is.
+                  eligible = rcs_score >= 1 and (ai_score >= 1 or enterprise_score >= 2 or vendor_score >= 1)
+              elif source_kind in {"AI lab", "Enterprise AI", "Enterprise IT"}:
                   eligible = ai_score >= 1 and (enterprise_score >= 1 or rcs_score >= 1 or vendor_score >= 1)
               else:
                   eligible = ai_score >= 1 and (enterprise_score >= 1 or rcs_score >= 1)
@@ -572,6 +527,83 @@ jobs:
                       reasons.append(f"{origin}: {str(e)[:140]}")
               return {"ok": False, "reasons": reasons[:14]}
 
+          def wrap_text(draw, text, font, max_width, max_lines=4):
+              words = normalize_space(text).split()
+              lines = []
+              current = ""
+              for word in words:
+                  test = (current + " " + word).strip()
+                  bbox = draw.textbbox((0, 0), test, font=font)
+                  if bbox[2] - bbox[0] <= max_width:
+                      current = test
+                  else:
+                      if current:
+                          lines.append(current)
+                      current = word
+                  if len(lines) >= max_lines:
+                      break
+              if current and len(lines) < max_lines:
+                  lines.append(current)
+              if len(lines) == max_lines and len(words) > len(" ".join(lines).split()):
+                  lines[-1] = lines[-1].rstrip(" .") + "..."
+              return lines
+
+          def fallback_visual_to_data_uri(item):
+              # CGI-branded fallback, alleen gebruikt als een echte bronafbeelding niet downloadbaar is.
+              W, H = 1200, 675
+              img = Image.new("RGB", (W, H), "white")
+              px = img.load()
+              red = (227, 25, 55)
+              purple = (82, 54, 171)
+              black = (0, 0, 0)
+              for y in range(H):
+                  for x in range(W):
+                      t = (x + y * 0.55) / (W + H * 0.55)
+                      if t < 0.58:
+                          k = t / 0.58
+                          r = int(red[0] * (1-k) + 168 * k)
+                          g = int(red[1] * (1-k) + 36 * k)
+                          b = int(red[2] * (1-k) + 101 * k)
+                      else:
+                          k = (t - 0.58) / 0.42
+                          r = int(168 * (1-k) + purple[0] * k)
+                          g = int(36 * (1-k) + purple[1] * k)
+                          b = int(101 * (1-k) + purple[2] * k)
+                      px[x, y] = (r, g, b)
+              draw = ImageDraw.Draw(img)
+              try:
+                  font_big = ImageFont.truetype("DejaVuSans-Bold.ttf", 58)
+                  font_med = ImageFont.truetype("DejaVuSans-Bold.ttf", 34)
+                  font_small = ImageFont.truetype("DejaVuSans.ttf", 24)
+              except Exception:
+                  font_big = font_med = font_small = ImageFont.load_default()
+              # Decorative brand shapes.
+              draw.rounded_rectangle((56, 48, 228, 116), radius=28, fill=(255, 255, 255))
+              draw.text((86, 62), "CGI", fill=black, font=font_med)
+              label = "AI + IT / Retail & Consumer Services"
+              draw.rounded_rectangle((56, 140, 520, 188), radius=24, fill=(0, 0, 0, 110))
+              draw.text((82, 151), label, fill=(255, 255, 255), font=font_small)
+              title = item.get("title", "Relevant AI & IT signal")
+              for i, line in enumerate(wrap_text(draw, title, font_big, 980, max_lines=3)):
+                  draw.text((62, 245 + i * 68), line, fill=(255, 255, 255), font=font_big)
+              source = item.get("source", "Bron")
+              topic = (item.get("topics") or ["CGI RCS"])[0]
+              footer = f"Geen downloadbaar bronbeeld · {source} · {topic}"
+              draw.rounded_rectangle((56, 584, 1144, 632), radius=24, fill=(0, 0, 0))
+              draw.text((82, 596), footer[:120], fill=(255, 255, 255), font=font_small)
+              out = io.BytesIO()
+              img.save(out, format="JPEG", quality=84, optimize=True)
+              b64 = base64.b64encode(out.getvalue()).decode("ascii")
+              return {
+                  "ok": True,
+                  "data_uri": f"data:image/jpeg;base64,{b64}",
+                  "source_image_url": "",
+                  "source_image_origin": "CGI fallback visual",
+                  "source_image_content_type": "image/jpeg",
+                  "attempts_before_success": [],
+                  "is_fallback_visual": True,
+              }
+
           def summarize(summary, max_len=260):
               txt = strip_tags(summary)
               if not txt:
@@ -583,27 +615,34 @@ jobs:
 
           def cgi_angle(item):
               topics = set(item.get("topics", []))
-              title = item.get("title", "")
+              if "Nederland & Europese markt" in topics and "Retail & Consumer Services" in topics:
+                  return "CGI Angle: relevant voor de Nederlandse/Benelux-markt omdat dit dichter bij klanten, merken, partners en platformen ligt waarmee CGI Retail & Consumer Services te maken krijgt. Bruikbaar voor lokale klantgesprekken over digitale strategie, IT-modernisering, data, commerce en AI-adoptie."
               if "Retail & Consumer Services" in topics and "AI Agents & Automation" in topics:
-                  return "CGI Angle: relevant voor Retail & Consumer Services omdat AI-agents steeds dichter bij echte winkel-, service- en backofficeprocessen komen. Goed bruikbaar voor klantgesprekken over procesautomatisering, governance, integratie met bestaande platformen en de stap van pilot naar schaalbare operatie."
-              if "Retail & Consumer Services" in topics and "Customer & Loyalty" in topics:
-                  return "CGI Angle: relevant voor retailers en consumer-services-klanten die AI willen inzetten voor betere klantinteractie, personalisatie en service. Voor CGI is dit vooral waardevol in gesprekken over klantdata, omnichannel journeys, consent, CRM/CDP-koppelingen en meetbare businesswaarde."
+                  return "CGI Angle: relevant omdat AI-agents dichter bij winkel-, service-, supply-chain- en backofficeprocessen komen. Voor CGI is dit bruikbaar in gesprekken over procesautomatisering, integratie met bestaande retailplatformen, governance en schaalbare delivery."
+              if "Retail & Consumer Services" in topics and "Customer, Loyalty & CX" in topics:
+                  return "CGI Angle: relevant voor retailers en consumer-services-klanten die klantinteractie, loyalty en service slimmer willen maken. Voor CGI raakt dit aan klantdata, CRM/CDP, omnichannel journeys, consent, contactcenterintegratie en meetbare businesswaarde."
+              if "Commerce Platforms & Martech" in topics or "Enterprise Architecture & Integration" in topics:
+                  return "CGI Angle: relevant omdat veel RCS-klantvragen landen op commerceplatformen, martech, CRM/CDP, PIM/OMS en integratie. Dit artikel kan helpen bij gesprekken over platformkeuzes, composable commerce, datakwaliteit en migratie-roadmaps."
               if "Supply Chain & Forecasting" in topics or "Store Operations" in topics:
-                  return "CGI Angle: interessant voor klanten die AI willen toepassen in operationele retailprocessen zoals voorraad, forecasting, winkeloperatie of fulfilment. Dit raakt direct aan data readiness, integratie met ERP/POS/WMS-systemen en betrouwbare delivery in de operatie."
+                  return "CGI Angle: interessant voor klanten die IT en AI willen toepassen in operationele retailprocessen zoals voorraad, forecasting, winkeloperatie, fulfilment of distributie. Dit raakt direct aan data readiness, ERP/POS/WMS-integratie en betrouwbare implementatie in de operatie."
+              if "Payments, Fraud & Security" in topics:
+                  return "CGI Angle: belangrijk voor retail- en consumer-services-klanten omdat betaalstromen, fraude, identity en security direct klantimpact hebben. Voor CGI is dit relevant voor platformintegratie, risk-by-design en betrouwbare omnichannel-architecturen."
               if "Governance, Risk & Responsible AI" in topics:
-                  return "CGI Angle: belangrijk voor CGI omdat AI-adoptie bij retailklanten alleen schaalbaar wordt met duidelijke governance, privacy, security en verantwoord gebruik. Dit artikel is bruikbaar als signaal voor klantgesprekken over AI control frameworks en enterprise-ready implementatie."
+                  return "CGI Angle: belangrijk omdat AI- en IT-adoptie bij retailklanten alleen schaalbaar wordt met duidelijke governance, privacy, security en verantwoord gebruik. Bruikbaar als signaal voor klantgesprekken over AI control frameworks en enterprise-ready implementatie."
               if "Data, Platforms & Cloud" in topics:
-                  return "CGI Angle: relevant voor de technische realisatie achter AI in retail en consumer services. De waarde zit vooral in platformkeuzes, cloudarchitectuur, datafundament, integraties en beheerbaarheid zodra AI-oplossingen voorbij de proof-of-conceptfase gaan."
+                  return "CGI Angle: relevant voor de technische realisatie achter AI en digitale retail. De waarde zit vooral in dataplatformen, cloudarchitectuur, integraties en beheerbaarheid zodra oplossingen voorbij de proof-of-conceptfase gaan."
               if "GenAI & Foundation Models" in topics:
-                  return "CGI Angle: goed om te volgen omdat modelontwikkelingen invloed hebben op wat klanten verwachten van AI-functionaliteit, kosten, performance en vendor-roadmaps. Voor CGI helpt dit bij het positioneren van haalbare AI-use-cases en architectuurkeuzes."
-              return "CGI Angle: relevant als marktsignaal voor hoe AI zich ontwikkelt richting enterprise-toepassing. Voor CGI Retail & Consumer Services is dit vooral nuttig om klantvragen, vendor-roadmaps en toekomstige AI-proposities beter te duiden."
+                  return "CGI Angle: goed om te volgen omdat modelontwikkelingen invloed hebben op klantverwachtingen, kosten, performance en vendor-roadmaps. Voor CGI helpt dit bij het positioneren van haalbare use-cases en architectuurkeuzes."
+              return "CGI Angle: relevant als marktsignaal voor hoe AI en retail-IT zich ontwikkelen richting enterprise-toepassing. Voor CGI Retail & Consumer Services helpt dit om klantvragen, vendor-roadmaps en toekomstige proposities beter te duiden."
 
           def source_icon(kind):
-              if kind == "Retail & Consumer Services":
+              if kind in {"Retail & Consumer Services", "Retail Tech", "Commerce Platform"}:
                   return "RCS"
+              if kind == "Dutch market":
+                  return "NL"
               if kind == "AI lab":
                   return "LAB"
-              if kind == "Enterprise AI":
+              if kind in {"Enterprise AI", "Enterprise IT"}:
                   return "IT"
               return "AI"
 
@@ -613,12 +652,12 @@ jobs:
           def build_week_summary(articles, topic_counts):
               top_topics = [t for t, c in sorted(topic_counts.items(), key=lambda x: (-x[1], x[0])) if c][:4]
               if not articles:
-                  return "Deze week zijn er geen artikelen gepubliceerd die zowel binnen de redactionele CGI Retail & Consumer Services scope vallen als een bruikbare bronafbeelding hebben. Controleer status.json voor afgewezen artikelen en bronfeeds."
+                  return "Deze week zijn er geen artikelen gepubliceerd binnen de redactionele CGI Retail & Consumer Services scope. Controleer status.json voor bronfeeds en scoring."
               pieces = []
               if top_topics:
-                  pieces.append("De relevante AI-nieuwsstroom van deze week clustert vooral rond " + ", ".join(top_topics[:-1]) + (" en " + top_topics[-1] if len(top_topics) > 1 else top_topics[0]) + ".")
-              pieces.append("Voor CGI Retail & Consumer Services ligt de waarde vooral in signalen die helpen bij klantgesprekken over AI-adoptie, data- en platformvolwassenheid, governance, customer experience, commerce en operationele retailprocessen.")
-              pieces.append("De selectie hieronder is bewust strenger dan een algemene AI-feed: artikelen worden alleen getoond wanneer ze een duidelijke AI/IT/Retail-relevantie hebben én een echte bronafbeelding succesvol kon worden ingesloten.")
+                  pieces.append("De relevante AI- en IT-nieuwsstroom van deze week clustert vooral rond " + ", ".join(top_topics[:-1]) + (" en " + top_topics[-1] if len(top_topics) > 1 else top_topics[0]) + ".")
+              pieces.append("Voor CGI Retail & Consumer Services ligt de waarde vooral in signalen die helpen bij klantgesprekken over AI-adoptie, composable commerce, data- en platformvolwassenheid, integratie, governance, customer experience, store operations, supply chain en Nederlandse/EU-marktontwikkelingen.")
+              pieces.append("De selectie hieronder is bewust strenger dan een algemene AI-feed: artikelen worden getoond wanneer ze duidelijke AI/IT/Retail-relevantie hebben. De workflow probeert eerst echte bronafbeeldingen te embedden; alleen als dat niet lukt gebruikt hij een CGI-branded fallback visual.")
               return " ".join(pieces)
 
           def render_html(articles, status):
@@ -628,13 +667,17 @@ jobs:
               filter_topics = [
                   "Alle artikelen",
                   "Retail & Consumer Services",
+                  "Nederland & Europese markt",
                   "AI Agents & Automation",
                   "GenAI & Foundation Models",
-                  "Customer & Loyalty",
+                  "Customer, Loyalty & CX",
                   "Store Operations",
                   "Supply Chain & Forecasting",
-                  "Pricing & Merchandising",
+                  "Pricing, Merchandising & Retail Media",
+                  "Commerce Platforms & Martech",
                   "Data, Platforms & Cloud",
+                  "Enterprise Architecture & Integration",
+                  "Payments, Fraud & Security",
                   "Governance, Risk & Responsible AI",
                   "Research & Market Signals",
               ]
@@ -647,13 +690,15 @@ jobs:
               cards = []
               for idx, a in enumerate(articles, 1):
                   topic_attr = "|".join(a.get("topics", []))
+                  tag_attr = "|".join(a.get("tags", []))
                   tags = "".join([f'<button class="tag" data-filter="{html_escape(t)}">{html_escape(t)}</button>' for t in a.get("tags", [])])
+                  image_label = "CGI visual · geen bronbeeld beschikbaar" if a.get("image_is_fallback") else f"Bronbeeld · {a.get('source_image_origin', 'source')}"
                   published = a["published"].strftime("%d %b %Y")
                   cards.append(f'''
-                  <article class="card" data-topics="{html_escape(topic_attr)}">
+                  <article class="card" data-topics="{html_escape(topic_attr)}" data-tags="{html_escape(tag_attr)}">
                     <div class="image-wrap">
                       <img src="{a['image_data_uri']}" alt="Bronafbeelding bij {html_escape(a['title'])}" loading="lazy">
-                      <div class="image-label">Bronbeeld · {html_escape(a.get('source_image_origin', 'source'))}</div>
+                      <div class="image-label">{html_escape(image_label)}</div>
                     </div>
                     <div class="card-body">
                       <div class="meta"><span>{html_escape(a['source'])}</span><span>{html_escape(published)}</span><span>{html_escape(source_icon(a['source_kind']))}</span></div>
@@ -674,7 +719,24 @@ jobs:
                     <a href="{html_escape(a['url'])}" target="_blank" rel="noopener noreferrer">{html_escape(a['title'])}</a>
                     <span>{html_escape(a['source'])}</span>
                   </li>''')
-              retail_html = "\n".join(retail_cards) or "<li>Geen aparte retailartikelen binnen de strenge source-image selectie.</li>"
+              retail_html = "\n".join(retail_cards) or "<li>Geen aparte retailartikelen binnen de selectie van deze week.</li>"
+
+              top_cards = []
+              for a in articles[:6]:
+                  published = a["published"].strftime("%d %b")
+                  primary_topic = a.get("topics", ["AI/RCS"])[0]
+                  top_cards.append(f"""
+                  <article class="top-card" data-filter="{html_escape(primary_topic)}">
+                    <img src="{a['image_data_uri']}" alt="Visual bij {html_escape(a['title'])}" loading="lazy">
+                    <div class="top-card-body">
+                      <div class="top-meta"><span>{html_escape(a['source'])}</span><span>{html_escape(published)}</span></div>
+                      <h3>{html_escape(a['title'])}</h3>
+                      <p>{html_escape(a['cgi_angle'])}</p>
+                      <a href="{html_escape(a['url'])}" target="_blank" rel="noopener noreferrer">Lees bronartikel →</a>
+                    </div>
+                  </article>
+                  """)
+              top_html = "\n".join(top_cards) or '<div class="empty">Geen topselectie beschikbaar.</div>'
 
               login_code_hash = hashlib.sha256(ACCESS_CODE.encode("utf-8")).hexdigest()
               source_names = sorted({a["source"] for a in articles})
@@ -692,7 +754,7 @@ jobs:
               a{color:inherit}.gate{position:fixed;inset:0;z-index:999;background:linear-gradient(135deg,var(--cgi-red),#a82465,var(--cgi-purple));display:flex;align-items:center;justify-content:center;padding:24px;color:#fff}
               .gate-box{width:min(520px,100%);background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.22);border-radius:28px;padding:34px;box-shadow:var(--shadow);backdrop-filter:blur(10px)}
               .gate-logo{font-weight:900;font-size:30px;letter-spacing:-.04em}.gate h1{font-size:34px;line-height:1.05;margin:18px 0 10px}.gate p{opacity:.92;line-height:1.5}.gate input{width:100%;border:0;border-radius:16px;padding:16px 18px;margin:12px 0;font-size:18px}.gate button{border:0;border-radius:999px;background:#fff;color:#111;padding:14px 20px;font-weight:800;cursor:pointer}.gate .error{display:none;color:#ffdfe4;font-weight:700}.hidden{display:none!important}
-              .hero{background:linear-gradient(135deg,var(--cgi-red),#a82465,var(--cgi-purple));color:#fff;padding:42px 20px 54px}.hero-inner{max-width:1180px;margin:auto}.brand{display:flex;justify-content:space-between;align-items:center;gap:20px}.logo{font-size:34px;font-weight:950;letter-spacing:-.05em}.version{font-size:12px;padding:8px 12px;border:1px solid rgba(255,255,255,.35);border-radius:999px;opacity:.9}.hero h1{font-size:clamp(36px,7vw,76px);letter-spacing:-.06em;line-height:.92;margin:45px 0 18px;max-width:920px}.hero p{font-size:clamp(16px,2vw,21px);line-height:1.5;max-width:920px;opacity:.94}.stat{display:inline-flex;align-items:center;gap:10px;background:#fff;color:#000;border-radius:999px;padding:13px 18px;font-weight:900;margin-top:22px}.content{max-width:1180px;margin:-32px auto 80px;padding:0 20px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow);padding:28px;margin-bottom:24px}.panel h2{font-size:28px;letter-spacing:-.03em;margin:0 0 12px}.panel p{color:#303240;line-height:1.65}.source-note{font-size:13px;color:var(--muted);margin-top:14px}.filters{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}.filter,.tag{border:1px solid var(--line);background:#fff;border-radius:999px;padding:10px 14px;font-weight:750;cursor:pointer;color:#222}.filter.active,.tag:hover{background:var(--cgi-purple);color:#fff;border-color:var(--cgi-purple)}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}.card{background:#fff;border:1px solid var(--line);border-radius:26px;overflow:hidden;box-shadow:0 10px 28px rgba(0,0,0,.06);display:flex;flex-direction:column}.image-wrap{position:relative;aspect-ratio:16/9;background:#000;overflow:hidden}.image-wrap img{width:100%;height:100%;display:block;object-fit:cover}.image-label{position:absolute;left:12px;bottom:12px;background:rgba(0,0,0,.72);color:#fff;font-size:11px;font-weight:800;border-radius:999px;padding:7px 10px}.card-body{padding:20px;display:flex;flex-direction:column;gap:12px;flex:1}.meta{display:flex;flex-wrap:wrap;gap:8px;color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.meta span{background:var(--soft);border-radius:999px;padding:6px 9px}.card h3{font-size:21px;line-height:1.12;letter-spacing:-.03em;margin:0}.summary{margin:0;color:#3d4050;line-height:1.5}.angle{margin:0;background:#fbf4f6;border-left:4px solid var(--cgi-red);padding:13px 14px;border-radius:14px;color:#222;line-height:1.45;font-size:14px}.tags{display:flex;flex-wrap:wrap;gap:7px}.tag{font-size:12px;padding:7px 10px}.source-button{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;background:var(--cgi-red);color:#fff;border-radius:999px;padding:13px 16px;font-weight:900;margin-top:auto;transition:transform .15s ease,box-shadow .15s ease}.source-button:hover{transform:translateY(-1px);box-shadow:0 10px 20px rgba(227,25,55,.25)}.retail-list{list-style:none;padding:0;margin:0;display:grid;gap:12px}.retail-list li{padding:14px;border:1px solid var(--line);border-radius:16px;background:#fff}.retail-list a{font-weight:850;text-decoration:none}.retail-list span{display:block;color:var(--muted);font-size:13px;margin-top:5px}.empty{padding:22px;border:1px dashed var(--line);border-radius:18px;color:var(--muted);background:#fff}.footer{max-width:1180px;margin:0 auto 40px;padding:0 20px;color:var(--muted);font-size:13px;line-height:1.5}@media(max-width:980px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hero h1{max-width:760px}}@media(max-width:640px){.grid{grid-template-columns:1fr}.content{padding:0 14px}.panel{padding:20px;border-radius:22px}.hero{padding:30px 14px 44px}.brand{align-items:flex-start;flex-direction:column}.hero h1{font-size:42px}.gate-box{padding:24px;border-radius:22px}}
+              .hero{background:linear-gradient(135deg,var(--cgi-red),#a82465,var(--cgi-purple));color:#fff;padding:42px 20px 54px}.hero-inner{max-width:1180px;margin:auto}.brand{display:flex;justify-content:space-between;align-items:center;gap:20px}.logo{font-size:34px;font-weight:950;letter-spacing:-.05em}.version{font-size:12px;padding:8px 12px;border:1px solid rgba(255,255,255,.35);border-radius:999px;opacity:.9}.hero h1{font-size:clamp(36px,7vw,76px);letter-spacing:-.06em;line-height:.92;margin:45px 0 18px;max-width:920px}.hero p{font-size:clamp(16px,2vw,21px);line-height:1.5;max-width:920px;opacity:.94}.stat{display:inline-flex;align-items:center;gap:10px;background:#fff;color:#000;border-radius:999px;padding:13px 18px;font-weight:900;margin-top:22px}.content{max-width:1180px;margin:-32px auto 80px;padding:0 20px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow);padding:28px;margin-bottom:24px}.panel h2{font-size:28px;letter-spacing:-.03em;margin:0 0 12px}.panel p{color:#303240;line-height:1.65}.source-note{font-size:13px;color:var(--muted);margin-top:14px}.filters{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}.filter,.tag{border:1px solid var(--line);background:#fff;border-radius:999px;padding:10px 14px;font-weight:750;cursor:pointer;color:#222}.filter.active,.tag:hover{background:var(--cgi-purple);color:#fff;border-color:var(--cgi-purple)}.top-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}.top-card{display:grid;grid-template-columns:160px 1fr;border:1px solid var(--line);border-radius:22px;background:#fff;overflow:hidden;box-shadow:0 8px 22px rgba(0,0,0,.05)}.top-card img{width:160px;height:100%;min-height:170px;object-fit:cover}.top-card-body{padding:18px}.top-meta{display:flex;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:12px;font-weight:850;text-transform:uppercase}.top-card h3{font-size:18px;line-height:1.15;margin:10px 0 8px;letter-spacing:-.02em}.top-card p{font-size:14px;line-height:1.45;margin:0 0 12px;color:#303240}.top-card a{display:inline-flex;text-decoration:none;background:var(--cgi-purple);color:#fff;border-radius:999px;padding:10px 13px;font-size:13px;font-weight:900}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}.card{background:#fff;border:1px solid var(--line);border-radius:26px;overflow:hidden;box-shadow:0 10px 28px rgba(0,0,0,.06);display:flex;flex-direction:column}.image-wrap{position:relative;aspect-ratio:16/9;background:#000;overflow:hidden}.image-wrap img{width:100%;height:100%;display:block;object-fit:cover}.image-label{position:absolute;left:12px;bottom:12px;background:rgba(0,0,0,.72);color:#fff;font-size:11px;font-weight:800;border-radius:999px;padding:7px 10px}.card-body{padding:20px;display:flex;flex-direction:column;gap:12px;flex:1}.meta{display:flex;flex-wrap:wrap;gap:8px;color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.meta span{background:var(--soft);border-radius:999px;padding:6px 9px}.card h3{font-size:21px;line-height:1.12;letter-spacing:-.03em;margin:0}.summary{margin:0;color:#3d4050;line-height:1.5}.angle{margin:0;background:#fbf4f6;border-left:4px solid var(--cgi-red);padding:13px 14px;border-radius:14px;color:#222;line-height:1.45;font-size:14px}.tags{display:flex;flex-wrap:wrap;gap:7px}.tag{font-size:12px;padding:7px 10px}.source-button{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;background:var(--cgi-red);color:#fff;border-radius:999px;padding:13px 16px;font-weight:900;margin-top:auto;transition:transform .15s ease,box-shadow .15s ease}.source-button:hover{transform:translateY(-1px);box-shadow:0 10px 20px rgba(227,25,55,.25)}.retail-list{list-style:none;padding:0;margin:0;display:grid;gap:12px}.retail-list li{padding:14px;border:1px solid var(--line);border-radius:16px;background:#fff}.retail-list a{font-weight:850;text-decoration:none}.retail-list span{display:block;color:var(--muted);font-size:13px;margin-top:5px}.empty{padding:22px;border:1px dashed var(--line);border-radius:18px;color:var(--muted);background:#fff}.footer{max-width:1180px;margin:0 auto 40px;padding:0 20px;color:var(--muted);font-size:13px;line-height:1.5}@media(max-width:980px){.grid,.top-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hero h1{max-width:760px}}@media(max-width:640px){.grid,.top-grid{grid-template-columns:1fr}.top-card{grid-template-columns:1fr}.top-card img{width:100%;height:180px}.content{padding:0 14px}.panel{padding:20px;border-radius:22px}.hero{padding:30px 14px 44px}.brand{align-items:flex-start;flex-direction:column}.hero h1{font-size:42px}.gate-box{padding:24px;border-radius:22px}}
               '''
               js = f'''
               const ACCESS_HASH = "{login_code_hash}";
@@ -714,7 +776,8 @@ jobs:
                 document.querySelectorAll('.filter').forEach(b => b.classList.toggle('active', b.dataset.filter === topic));
                 document.querySelectorAll('.card').forEach(card => {{
                   const topics = card.dataset.topics || '';
-                  card.style.display = (topic === 'all' || topics.includes(topic)) ? '' : 'none';
+                  const tags = card.dataset.tags || '';
+                  card.style.display = (topic === 'all' || topics.includes(topic) || tags.includes(topic)) ? '' : 'none';
                 }});
               }}
               document.addEventListener('DOMContentLoaded', () => {{
@@ -728,21 +791,21 @@ jobs:
               '''
               count = len(articles)
               if count == 0:
-                  article_html = '<div class="empty">Geen artikelen gepubliceerd binnen de strenge combinatie van CGI RCS-relevantie en werkende bronafbeelding. Controleer status.json voor diagnose.</div>'
+                  article_html = '<div class="empty">Geen artikelen gepubliceerd binnen de CGI RCS-relevantieregels. Controleer status.json voor bron- en scoringsdiagnose.</div>'
               return f'''<!doctype html>
               <html lang="nl">
               <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <meta name="robots" content="noindex,nofollow">
-                <title>CGI AI Retail & Consumer Services Weekstream</title>
+                <title>CGI AI & IT Retail & Consumer Services Weekstream</title>
                 <style>{css}</style>
               </head>
               <body>
                 <section id="gate" class="gate">
                   <div class="gate-box">
                     <div class="gate-logo">CGI</div>
-                    <h1>AI Retail & Consumer Services Weekstream</h1>
+                    <h1>AI & IT Retail & Consumer Services Weekstream</h1>
                     <p>Voer de toegangscode in om de wekelijkse briefing te openen.</p>
                     <input id="accessCode" type="password" placeholder="Toegangscode" autocomplete="current-password">
                     <button onclick="unlock()">Open briefing</button>
@@ -753,8 +816,8 @@ jobs:
                   <header class="hero">
                     <div class="hero-inner">
                       <div class="brand"><div class="logo">CGI</div><div class="version">{VERSION}</div></div>
-                      <h1>AI Weekstream voor Retail & Consumer Services</h1>
-                      <p>AI-focussed news met praktische relevantie voor CGI IT- en AI-toepassingen binnen retail, commerce, customer experience en consumer services.</p>
+                      <h1>AI & IT Weekstream voor Retail & Consumer Services</h1>
+                      <p>AI- en IT-focussed news met praktische relevantie voor CGI Retail & Consumer Services: retail, commerce, customer experience, operations, data, platformen en consumer services.</p>
                       <div class="stat">{count} relevante artikelen</div>
                     </div>
                   </header>
@@ -762,7 +825,12 @@ jobs:
                     <section class="panel">
                       <h2>Weeksamenvatting</h2>
                       <p>{html_escape(week_summary)}</p>
-                      <div class="source-note">Scope: AI-ontwikkelingen met relevantie voor CGI Retail & Consumer Services. Bronbeelden zijn verplicht; artikelen zonder downloadbare bronafbeelding worden niet gepubliceerd.</div>
+                      <div class="source-note">Scope: AI- en IT-ontwikkelingen met relevantie voor CGI Retail & Consumer Services, inclusief retailtech, commerce-platformen en Nederlandse/EU-marktsignalen. Bronbeelden hebben prioriteit; als een bronbeeld niet downloadbaar is, gebruikt de pagina een CGI-branded visual zodat relevante artikelen niet wegvallen.</div>
+                    </section>
+                    <section class="panel">
+                      <h2>Topselectie voor CGI Retail & Consumer Services</h2>
+                      <p>De belangrijkste signalen voor klantgesprekken, proposities en delivery deze week.</p>
+                      <div class="top-grid">{top_html}</div>
                     </section>
                     <section class="panel">
                       <h2>Filter op topic</h2>
@@ -851,10 +919,11 @@ jobs:
                           "article_page_error": page_error,
                           "image_reasons": image.get("reasons", [])[:8],
                       })
-                      continue
+                      image = fallback_visual_to_data_uri(item)
                   item["image_data_uri"] = image["data_uri"]
-                  item["source_image_url"] = image["source_image_url"]
-                  item["source_image_origin"] = image["source_image_origin"]
+                  item["source_image_url"] = image.get("source_image_url", "")
+                  item["source_image_origin"] = image.get("source_image_origin", "source")
+                  item["image_is_fallback"] = bool(image.get("is_fallback_visual"))
                   item["short_summary"] = summarize(item.get("summary", ""))
                   item["cgi_angle"] = cgi_angle(item)
                   published.append(item)
@@ -876,19 +945,20 @@ jobs:
                   "version": VERSION,
                   "generated_at_utc": generated.isoformat(),
                   "lookback_hours": LOOKBACK_HOURS,
-                  "scope": "AI-focussed news relevant for CGI IT/AI toepassingen binnen Retail & Consumer Services",
-                  "selection_rule": "Publish only if CGI RCS relevance score passes threshold and a real source image can be embedded.",
+                  "scope": "AI- en IT-focussed news relevant voor CGI IT/AI toepassingen binnen Retail & Consumer Services, inclusief Nederlandse/EU retail-, commerce- en consumer-services-signalen",
+                  "selection_rule": "Publish if CGI RCS relevance score passes threshold and source has AI/IT/RCS relevance. Real source images are embedded when possible; CGI fallback visuals are used only when source images cannot be downloaded.",
                   "min_relevance_score": MIN_RELEVANCE_SCORE,
                   "article_count": len(published),
                   "article_candidates_after_score": len(scored),
                   "raw_recent_items": len(raw_items),
-                  "source_images_embedded": len(published),
-                  "fallback_visuals": 0,
-                  "strict_source_images": True,
+                  "source_images_embedded": sum(1 for a in published if not a.get("image_is_fallback")),
+                  "fallback_visuals": sum(1 for a in published if a.get("image_is_fallback")),
+                  "strict_source_images": False,
+                  "source_image_first": True,
                   "no_external_image_paths": True,
-                  "image_pipeline": "RSS/article source image -> download -> crop to 16:9 -> convert to JPG -> embed as data URI",
-                  "rejected_without_source_image_count": len(rejected_no_image),
-                  "rejected_without_source_image_sample": rejected_no_image[:15],
+                  "image_pipeline": "source image first: RSS/article source image -> download -> crop to 16:9 -> JPG -> embed as data URI; CGI fallback visual only if source image fails",
+                  "source_image_failures_with_fallback": len(rejected_no_image),
+                  "source_image_failure_sample": rejected_no_image[:15],
                   "topics": topic_counts,
                   "sources": source_status,
                   "published_articles": [
@@ -901,6 +971,7 @@ jobs:
                           "topics": a.get("topics", []),
                           "source_image_url": a.get("source_image_url"),
                           "source_image_origin": a.get("source_image_origin"),
+                          "image_is_fallback": bool(a.get("image_is_fallback")),
                           "cgi_angle": a.get("cgi_angle"),
                       }
                       for a in published
@@ -918,8 +989,9 @@ jobs:
               log(json.dumps({
                   "version": VERSION,
                   "article_count": len(published),
-                  "source_images_embedded": len(published),
-                  "rejected_without_source_image_count": len(rejected_no_image),
+                  "source_images_embedded": sum(1 for a in published if not a.get("image_is_fallback")),
+                  "fallback_visuals": sum(1 for a in published if a.get("image_is_fallback")),
+                  "source_image_failures_with_fallback": len(rejected_no_image),
                   "topics": topic_counts,
               }, ensure_ascii=False, indent=2))
               if len(published) == 0:
