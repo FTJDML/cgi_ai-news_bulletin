@@ -1,4 +1,4 @@
-name: CGI AI & IT Retail & Consumer Services Weekstream - v15
+name: CGI AI & IT Retail & Consumer Services Weekstream - v16 strict 7-day filter
 
 on:
   workflow_dispatch:
@@ -54,9 +54,11 @@ jobs:
 
           from PIL import Image, ImageOps, ImageDraw, ImageFont, UnidentifiedImageError
 
-          VERSION = "v15.0-cgi-rcs-ai-it-images-first-fallback"
+          VERSION = "v16.0-cgi-rcs-strict-7-day-filter"
           ACCESS_CODE = "NT2026!"
           LOOKBACK_HOURS = 168
+          MAX_FUTURE_SKEW_HOURS = 6
+          STRICT_DATE_FILTER = True
           MAX_PUBLISHED_ARTICLES = 54
           MAX_FEED_ITEMS_PER_SOURCE = 50
           MIN_RELEVANCE_SCORE = 6.5
@@ -70,7 +72,7 @@ jobs:
           USER_AGENT = (
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
               "AppleWebKit/537.36 (KHTML, like Gecko) "
-              "Chrome/126.0 Safari/537.36 CGI-RCS-AI-IT-Weekstream/15.0"
+              "Chrome/126.0 Safari/537.36 CGI-RCS-AI-IT-Weekstream/16.0"
           )
 
           # Redactionele scope:
@@ -257,6 +259,9 @@ jobs:
               raw = normalize_space(raw)
               if not raw:
                   return None
+              # Remove common wrappers and whitespace that break parsedate/strptime.
+              raw = html.unescape(raw).strip()
+              raw = re.sub(r"\s+", " ", raw)
               try:
                   dt = email.utils.parsedate_to_datetime(raw)
                   if dt.tzinfo is None:
@@ -264,15 +269,136 @@ jobs:
                   return dt.astimezone(timezone.utc)
               except Exception:
                   pass
-              for fmt in ["%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d"]:
+              # Support common ISO variants, including fractional seconds.
+              iso = raw.replace("Z", "+00:00")
+              try:
+                  dt = datetime.fromisoformat(iso)
+                  if dt.tzinfo is None:
+                      dt = dt.replace(tzinfo=timezone.utc)
+                  return dt.astimezone(timezone.utc)
+              except Exception:
+                  pass
+              for fmt in ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%d %B %Y", "%d %b %Y"]:
                   try:
-                      dt = datetime.strptime(raw[:25], fmt)
+                      dt = datetime.strptime(raw[:32], fmt)
                       if dt.tzinfo is None:
                           dt = dt.replace(tzinfo=timezone.utc)
                       return dt.astimezone(timezone.utc)
                   except Exception:
                       pass
               return None
+
+
+          def parse_date_from_url(url):
+              """Extract a publication date from common URL patterns as a last resort."""
+              try:
+                  path = urllib.parse.urlsplit(url).path
+              except Exception:
+                  path = url or ""
+              patterns = [
+                  r"/(20\d{2})/(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])(?:/|$)",
+                  r"/(20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])(?:-|/|$)",
+                  r"/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?:-|/|$)",
+              ]
+              for pat in patterns:
+                  m = re.search(pat, path)
+                  if m:
+                      try:
+                          return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
+                      except Exception:
+                          return None
+              return None
+
+
+          def extract_feed_published_date(node, article_url):
+              """Return (dt, source_name, raw). Prefer real publication dates over updated dates.
+
+              Older articles were slipping through because missing dates fell back to now_utc(),
+              and because some feeds expose only an updated date. This function is strict:
+              no parseable date means the item is not considered fresh.
+              """
+              publish_fields = ["pubDate", "published", "date", "dc:date", "issued", "created", "publicationdate"]
+              updated_fields = ["updated", "modified", "dateModified"]
+              for name in publish_fields:
+                  raw = find_child_text(node, [name])
+                  dt = parse_date(raw)
+                  if dt:
+                      return dt, name, raw
+              # Atom feeds sometimes only expose updated. Keep it as provisional; the article page
+              # will be checked later before publishing.
+              for name in updated_fields:
+                  raw = find_child_text(node, [name])
+                  dt = parse_date(raw)
+                  if dt:
+                      return dt, f"{name}-provisional", raw
+              url_dt = parse_date_from_url(article_url)
+              if url_dt:
+                  return url_dt, "url-date", article_url
+              return None, "missing", ""
+
+
+          def extract_published_date_from_page(page, article_url):
+              """Extract a publication date from the source article page.
+
+              Only publication-like fields count. dateModified/updated are intentionally not used
+              as a final publication date, because they can make old evergreen articles look fresh.
+              """
+              checks = []
+              meta_names = [
+                  "article:published_time", "og:published_time", "pubdate", "publishdate", "publish_date",
+                  "datepublished", "date_published", "sailthru.date", "parsely-pub-date",
+                  "dc.date", "dc.date.issued", "date", "citation_publication_date",
+              ]
+              for name in meta_names:
+                  escaped = re.escape(name)
+                  patterns = [
+                      rf"<meta[^>]+(?:property|name|itemprop)=['\"]{escaped}['\"][^>]+content=['\"]([^'\"]+)['\"]",
+                      rf"<meta[^>]+content=['\"]([^'\"]+)['\"][^>]+(?:property|name|itemprop)=['\"]{escaped}['\"]",
+                  ]
+                  for pat in patterns:
+                      for m in re.finditer(pat, page, flags=re.I):
+                          checks.append((m.group(1), f"article:{name}"))
+              # JSON-LD datePublished fields.
+              for script_match in re.finditer(r"<script[^>]+type=['\"]application/ld\+json['\"][^>]*>([\s\S]*?)</script>", page, flags=re.I):
+                  blob = html.unescape(script_match.group(1))
+                  for key in ["datePublished", "uploadDate"]:
+                      for m in re.finditer(rf'"{key}"\s*:\s*"([^"\\]+)"', blob, flags=re.I):
+                          checks.append((m.group(1), f"article:jsonld:{key}"))
+              # <time datetime="..."> is common in news templates.
+              for m in re.finditer(r"<time[^>]+datetime=['\"]([^'\"]+)['\"]", page, flags=re.I):
+                  checks.append((m.group(1), "article:time"))
+              # Last resort: URL date.
+              url_dt = parse_date_from_url(article_url)
+              if url_dt:
+                  return url_dt, "article:url-date", article_url
+              for raw, source in checks:
+                  dt = parse_date(raw)
+                  if dt:
+                      return dt, source, raw
+              return None, "", ""
+
+
+          def choose_effective_published_date(item, page_date=None, page_date_source=""):
+              rss_date = item.get("published")
+              rss_source = item.get("published_source", "")
+              candidates = []
+              if rss_date and "provisional" not in rss_source:
+                  candidates.append((rss_date, rss_source or "rss"))
+              if page_date:
+                  candidates.append((page_date, page_date_source or "article-page"))
+              if not candidates:
+                  return None, "No verified publication date. Updated-only feed dates are not enough."
+              # Use the oldest publication-like date found. This prevents old articles with recent
+              # RSS updated dates from entering the 7-day briefing.
+              effective, source = min(candidates, key=lambda x: x[0])
+              now = now_utc()
+              if effective > now + timedelta(hours=MAX_FUTURE_SKEW_HOURS):
+                  return None, f"Publication date is in the future: {effective.isoformat()} via {source}"
+              cutoff = now - timedelta(hours=LOOKBACK_HOURS)
+              if effective < cutoff:
+                  return None, f"Older than {LOOKBACK_HOURS} hours: {effective.isoformat()} via {source}; cutoff {cutoff.isoformat()}"
+              return effective, source
+
 
           def extract_image_candidates_from_html_fragment(fragment, base_url, origin):
               out = []
@@ -326,8 +452,10 @@ jobs:
                           summary_html = txt
                           break
                   summary = strip_tags(summary_html)
-                  date_raw = find_child_text(node, ["pubDate", "published", "updated", "date"])
-                  published = parse_date(date_raw) or now_utc()
+                  published, published_source, date_raw = extract_feed_published_date(node, url)
+                  if published is None:
+                      # Strict date mode: do not treat undated feed items as current news.
+                      continue
                   cats = []
                   for el in node.iter():
                       if tag_name(el) == "category":
@@ -343,6 +471,8 @@ jobs:
                       "url": url,
                       "summary": summary,
                       "published": published,
+                      "published_source": published_source,
+                      "rss_date_raw": date_raw,
                       "categories": cats[:8],
                       "rss_image_candidates": extract_rss_image_candidates(node, url),
                   })
@@ -441,11 +571,13 @@ jobs:
               }
               return item
 
-          def fetch_article_image_candidates(article_url):
+          def fetch_article_metadata(article_url):
+              """Fetch source page once and return image candidates plus publication date metadata."""
               try:
                   page, ctype = request_text(article_url, max_bytes=MAX_HTML_BYTES)
               except Exception as e:
-                  return [], f"article page fetch failed: {e}"
+                  return [], None, "", f"article page fetch failed: {e}"
+              page_date, page_date_source, page_date_raw = extract_published_date_from_page(page, article_url)
               candidates = []
               # Open Graph / Twitter card.
               patterns = [
@@ -480,7 +612,8 @@ jobs:
                       continue
                   seen.add(u)
                   unique.append({"url": u, "origin": c.get("origin", "article")})
-              return unique[:12], ""
+              return unique[:12], page_date, page_date_source, ""
+
 
           def source_image_to_data_uri(candidates, article_url):
               reasons = []
@@ -894,11 +1027,29 @@ jobs:
 
               published = []
               rejected_no_image = []
+              rejected_date_filter = []
               for item in scored:
                   if len(published) >= MAX_PUBLISHED_ARTICLES:
                       break
                   candidates_img = list(item.get("rss_image_candidates", []))
-                  page_candidates, page_error = fetch_article_image_candidates(item["url"])
+                  page_candidates, page_date, page_date_source, page_error = fetch_article_metadata(item["url"])
+                  effective_date, date_source = choose_effective_published_date(item, page_date, page_date_source)
+                  if effective_date is None:
+                      rejected_date_filter.append({
+                          "title": item["title"],
+                          "source": item["source"],
+                          "url": item["url"],
+                          "rss_published": item.get("published").isoformat() if item.get("published") else None,
+                          "rss_published_source": item.get("published_source", ""),
+                          "page_date": page_date.isoformat() if page_date else None,
+                          "page_date_source": page_date_source,
+                          "reason": date_source,
+                      })
+                      continue
+                  item["published"] = effective_date
+                  item["published_source_effective"] = date_source
+                  item["page_published"] = page_date
+                  item["page_published_source"] = page_date_source
                   candidates_img.extend(page_candidates)
                   # De-duplicate candidates.
                   seen = set()
@@ -945,6 +1096,9 @@ jobs:
                   "version": VERSION,
                   "generated_at_utc": generated.isoformat(),
                   "lookback_hours": LOOKBACK_HOURS,
+                  "strict_date_filter": True,
+                  "cutoff_utc": (generated - timedelta(hours=LOOKBACK_HOURS)).isoformat(),
+                  "max_future_skew_hours": MAX_FUTURE_SKEW_HOURS,
                   "scope": "AI- en IT-focussed news relevant voor CGI IT/AI toepassingen binnen Retail & Consumer Services, inclusief Nederlandse/EU retail-, commerce- en consumer-services-signalen",
                   "selection_rule": "Publish if CGI RCS relevance score passes threshold and source has AI/IT/RCS relevance. Real source images are embedded when possible; CGI fallback visuals are used only when source images cannot be downloaded.",
                   "min_relevance_score": MIN_RELEVANCE_SCORE,
@@ -959,6 +1113,8 @@ jobs:
                   "image_pipeline": "source image first: RSS/article source image -> download -> crop to 16:9 -> JPG -> embed as data URI; CGI fallback visual only if source image fails",
                   "source_image_failures_with_fallback": len(rejected_no_image),
                   "source_image_failure_sample": rejected_no_image[:15],
+                  "date_rejected_count": len(rejected_date_filter),
+                  "date_rejected_sample": rejected_date_filter[:20],
                   "topics": topic_counts,
                   "sources": source_status,
                   "published_articles": [
@@ -967,6 +1123,10 @@ jobs:
                           "source": a["source"],
                           "url": a["url"],
                           "published": a["published"].isoformat(),
+                          "published_source_effective": a.get("published_source_effective", a.get("published_source", "")),
+                          "rss_published_source": a.get("published_source", ""),
+                          "page_published": a.get("page_published").isoformat() if a.get("page_published") else None,
+                          "page_published_source": a.get("page_published_source", ""),
                           "score": a["score"],
                           "topics": a.get("topics", []),
                           "source_image_url": a.get("source_image_url"),
@@ -982,7 +1142,7 @@ jobs:
                   (target / "index.html").write_text(html_doc, encoding="utf-8")
                   (target / "status.json").write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
                   (target / "DEPLOYMENT_CHECK.txt").write_text(
-                      f"{VERSION}\nGenerated: {generated.isoformat()}\nArticles: {len(published)}\nSource images embedded: {len(published)}\n",
+                      f"{VERSION}\nGenerated: {generated.isoformat()}\nArticles: {len(published)}\nSource images embedded: {sum(1 for a in published if not a.get("image_is_fallback"))}\nFallback visuals: {sum(1 for a in published if a.get("image_is_fallback"))}\nDate rejected: {len(rejected_date_filter)}\n",
                       encoding="utf-8",
                   )
               (OUTPUT_DIR / ".nojekyll").write_text("", encoding="utf-8")
@@ -992,6 +1152,7 @@ jobs:
                   "source_images_embedded": sum(1 for a in published if not a.get("image_is_fallback")),
                   "fallback_visuals": sum(1 for a in published if a.get("image_is_fallback")),
                   "source_image_failures_with_fallback": len(rejected_no_image),
+                  "date_rejected_count": len(rejected_date_filter),
                   "topics": topic_counts,
               }, ensure_ascii=False, indent=2))
               if len(published) == 0:
